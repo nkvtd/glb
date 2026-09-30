@@ -44,7 +44,10 @@
   "overrides": {
     "esbuild": "^0.25.0"
   },
-  "scripts": {},
+  "scripts": {
+    "lint": "biome check src",
+    "lint:fix": "biome check --write src"
+  },
   "allowScripts": {
     "esbuild@0.25.12": true
   }
