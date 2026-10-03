@@ -45,6 +45,7 @@
     "esbuild": "^0.25.0"
   },
   "scripts": {
+    "build": "rimraf dist && node esbuild.config.js && tsc-alias",
     "lint": "biome check src",
     "lint:fix": "biome check --write src"
   },
