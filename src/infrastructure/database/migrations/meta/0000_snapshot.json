@@ -1,0 +1,177 @@
+{
+  "id": "bbeb51cf-7ee7-41d5-9852-3ede3009cbb5",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.municipalities": {
+      "name": "municipalities",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "code": {
+          "name": "code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "municipality_code": {
+          "name": "municipality_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name_mk": {
+          "name": "name_mk",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name_en": {
+          "name": "name_en",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "region_code": {
+          "name": "region_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "region_name_mk": {
+          "name": "region_name_mk",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "region_name_en": {
+          "name": "region_name_en",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "morphological_type": {
+          "name": "morphological_type",
+          "type": "morphological_type",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "center_geom": {
+          "name": "center_geom",
+          "type": "geometry(Point, 4326)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "boundary_geom": {
+          "name": "boundary_geom",
+          "type": "geometry(MultiPolygon, 4326)",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "idx_municipalities_adm2": {
+          "name": "idx_municipalities_adm2",
+          "columns": [
+            {
+              "expression": "municipality_code",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "idx_municipalities_region": {
+          "name": "idx_municipalities_region",
+          "columns": [
+            {
+              "expression": "region_code",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "idx_municipalities_boundary": {
+          "name": "idx_municipalities_boundary",
+          "columns": [
+            {
+              "expression": "boundary_geom",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "gist",
+          "with": {}
+        },
+        "idx_municipalities_center": {
+          "name": "idx_municipalities_center",
+          "columns": [
+            {
+              "expression": "center_geom",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "gist",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "municipalities_code_unique": {
+          "name": "municipalities_code_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "code"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {
+    "public.morphological_type": {
+      "name": "morphological_type",
+      "schema": "public",
+      "values": [
+        "urban",
+        "rural"
+      ]
+    }
+  },
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

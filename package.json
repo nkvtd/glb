@@ -27,7 +27,6 @@
     "hono": "^4.13.1",
     "hono-rate-limiter": "^0.5.3",
     "pg": "^8.22.0",
-    "tsc-alias": "^1.9.1",
     "winston": "^3.19.0",
     "winston-daily-rotate-file": "^5.0.0",
     "zod": "^4.4.3",
@@ -45,9 +44,15 @@
     "esbuild": "^0.25.0"
   },
   "scripts": {
-    "build": "rimraf dist && node esbuild.config.js && tsc-alias",
+    "build": "rimraf dist && node esbuild.config.js",
     "lint": "biome check src",
-    "lint:fix": "biome check --write src"
+    "lint:fix": "biome check --write src",
+    "format": "biome format --write src",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:seed": "node dist/infrastructure/database/seed.js",
+    "start:server": "node dist/server.js",
+    "start:worker": "node dist/worker.js"
   },
   "allowScripts": {
     "esbuild@0.25.12": true

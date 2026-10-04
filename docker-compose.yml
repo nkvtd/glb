@@ -1,0 +1,126 @@
+services:
+  postgres:
+    image: postgis/postgis:18-3.6
+    container_name: glb-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD_FILE: /run/secrets/database_password
+      POSTGRES_DB: ${POSTGRES_DB:-glb-db}
+    secrets:
+      - database_password
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    ports:
+      - '127.0.0.1:5432:5432'
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  migrate:
+    container_name: glb-migrate
+    image: ghcr.io/nkvtd/glb:latest
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+
+        if [ ! -f /run/secrets/database_password ]; then
+          echo "/run/secrets/database_password is missing." >&2
+          exit 1
+        fi
+
+        DB_PASSWORD="$$(tr -d '\r\n' < /run/secrets/database_password)"
+        export DATABASE_URL="postgresql://$${POSTGRES_USER}:$${DB_PASSWORD}@postgres:5432/$${POSTGRES_DB}"
+
+        npm run db:migrate
+        npm run db:seed
+    restart: 'no'
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-glb-db}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+    secrets:
+      - database_password
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  server:
+    container_name: glb-server
+    image: ghcr.io/nkvtd/glb:latest
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+
+        if [ ! -f /run/secrets/database_password ]; then
+          echo "/run/secrets/database_password is missing." >&2
+          exit 1
+        fi
+
+        DB_PASSWORD="$$(tr -d '\r\n' < /run/secrets/database_password)"
+        export DATABASE_URL="postgresql://$${POSTGRES_USER}:$${DB_PASSWORD}@postgres:5432/$${POSTGRES_DB}"
+
+        exec npm run start:server
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-glb-db}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      PORT: ${PORT:-8080}
+    secrets:
+      - database_password
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - '127.0.0.1:${PORT:-8080}:8080'
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q -O - http://localhost:8080/api/ready > /dev/null || exit 1']
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  worker:
+    container_name: glb-worker
+    image: ghcr.io/nkvtd/glb:latest
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+
+        if [ ! -f /run/secrets/database_password ]; then
+          echo "/run/secrets/database_password is missing." >&2
+          exit 1
+        fi
+
+        DB_PASSWORD="$$(tr -d '\r\n' < /run/secrets/database_password)"
+        export DATABASE_URL="postgresql://$${POSTGRES_USER}:$${DB_PASSWORD}@postgres:5432/$${POSTGRES_DB}"
+
+        exec npm run start:worker
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-glb-db}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+    secrets:
+      - database_password
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  postgres_data:
+
+secrets:
+  database_password:
+    file: ./secrets/database_password.txt
