@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { sql } from 'drizzle-orm';
+import { logger } from '../logging/logger.js';
 import { db, pool } from './db.js';
 
 type AdministrativeType = 'urban' | 'rural';
@@ -102,14 +103,15 @@ async function seed() {
         }
     });
 
-    console.log(`Seeded data successfully.`);
+    logger.info(`Seeded data successfully.`);
 }
 
 try {
     await seed();
 } catch (error) {
-    console.error('Data seeding failed:', error);
+    logger.error('Data seeding failed:', error);
     process.exitCode = 1;
 } finally {
     await pool.end();
+    logger.close();
 }
