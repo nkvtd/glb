@@ -103,13 +103,13 @@ async function seed() {
         }
     });
 
-    logger.info(`Seeded data successfully.`);
+    logger.info(`[Seeder] seeded GIS data successfully.`);
 }
 
 try {
     await seed();
 } catch (error) {
-    logger.error('Data seeding failed:', error);
+    logger.error(`[Seeder] seeding GIS data failed:\n%O`, error);
     process.exitCode = 1;
 } finally {
     await pool.end();

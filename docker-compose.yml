@@ -72,6 +72,9 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-glb-db}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       PORT: ${PORT:-8080}
+      TZ: Europe/Skopje
+    env_file:
+      - .env
     secrets:
       - database_password
     depends_on:
@@ -110,6 +113,9 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-glb-db}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      TZ: Europe/Skopje
+    env_file:
+      - .env
     secrets:
       - database_password
     depends_on:

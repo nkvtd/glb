@@ -13,6 +13,7 @@ RUN npm run build
 
 
 FROM node:24-alpine
+RUN apk add --no-cache tzdata
 
 WORKDIR /app
 
