@@ -66,6 +66,7 @@ export class EvnStrategy
                       : 'ended';
 
             const locationLabel = this.formatLocation(place);
+            const description = this.formatDescription(address);
             const code =
                 this.resolver.resolve(locationLabel) ??
                 this.resolver.resolve(place);
@@ -75,7 +76,7 @@ export class EvnStrategy
                 source: this.source,
                 category: this.category,
                 title: `${type}: ${locationLabel}`,
-                description: address,
+                description: description,
                 municipalityCode: code,
                 locationLabel: locationLabel,
                 status: status,
@@ -100,7 +101,7 @@ export class EvnStrategy
         const withoutParens = raw.replace(/\s*\([^)]+\)\s*$/, '').trim();
 
         if (withoutParens === 'МАВРОВО-РОСТУШЕ') {
-            return 'Маврово и Ростуше';
+            return 'Маврово и Ростуша';
         }
 
         const match = withoutParens.match(/^(.+?)(?<!\s)-(?!\s)(.+)$/);
@@ -126,6 +127,23 @@ export class EvnStrategy
         }
 
         return `${settlement}, ${municipality}`;
+    }
+
+    private formatDescription(raw: string): string {
+        const cleaned = raw
+            .replace(/,(?!\s|\d)/g, ', ')
+            .replace(/\s+/g, ' ')
+            .replace(/\.+$/, '')
+            .trim();
+
+        const isProse =
+            /^(поради|заради|технички|потребно|ќе останат|потрошувачите|корисниците|без |прекини|во )/iu.test(
+                cleaned,
+            );
+
+        return isProse
+            ? `${cleaned}.`
+            : `Без електрична енергија ќе останат корисниците во: ${cleaned}.`;
     }
 
     private toTitleCase(text: string): string {
