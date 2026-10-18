@@ -65,6 +65,7 @@ export const reports = pgTable(
         description: text('description'),
         municipalityCode: text('municipality_code'), //municipality.code
         locationLabel: text('location_label'),
+        geom: pointGeometry('geom'),
         status: lifecycleStatusEnum('status').notNull(),
         rawPayload: jsonb('raw_payload'),
 
@@ -96,6 +97,7 @@ export const reports = pgTable(
         ),
         index('reports_municipality_code_idx').on(t.municipalityCode),
         index('reports_category_idx').on(t.category),
+        index('reports_geom_idx').using('gist', t.geom),
         index('reports_status_idx').on(t.status),
         index('reports_starts_at_idx').on(t.startsAt),
         index('reports_ends_at_idx').on(t.endsAt),

@@ -7,7 +7,6 @@ import {
     isNotNull,
     isNull,
     lte,
-    ne,
     or,
     sql,
 } from 'drizzle-orm';
@@ -41,22 +40,49 @@ export class ScrapingOrchestrator {
     }
 
     start(): void {
+        for (const strategy of this.strategies) {
+            const job = new Cron(
+                strategy.schedule,
+                { protect: true },
+                async () => {
+                    await this.run(strategy);
+                },
+            );
+            this.jobs.push(job);
+            job.trigger();
+        }
+
         const reconcileJob = new Cron(
             '*/15 * * * *',
             { protect: true },
             async () => {
                 try {
-                    const started = await this.db.transaction(async (tx) => {
+                    logger.info('[Worker:reconciler] reconciling...');
+
+                    const entries = await this.db.transaction(async (tx) => {
                         const r = await this.reconcileTable(tx, reports);
                         const e = await this.reconcileTable(tx, events);
-                        return [...r, ...e];
+                        return {
+                            r,
+                            e,
+                        };
                     });
 
-                    if (started.length > 0) {
-                        logger.info(
-                            `[Worker:reconciler] transitioned ${started.length} entries to ongoing.`,
-                        );
+                    const started = [
+                        ...entries.r.started,
+                        ...entries.e.started,
+                    ];
+                    const ended = [...entries.r.ended, ...entries.e.ended];
+                    const unknown = [
+                        ...entries.r.unknown,
+                        ...entries.e.unknown,
+                    ];
 
+                    logger.info(
+                        `[Worker:reconciler] transitioned ${started.length} entries to ongoing, ${ended.length} entries to ended, and ${unknown.length} entries to unknown.`,
+                    );
+
+                    if (started.length > 0) {
                         const bySource = Map.groupBy(
                             started,
                             (item) => item.source,
@@ -75,19 +101,6 @@ export class ScrapingOrchestrator {
             },
         );
         this.jobs.push(reconcileJob);
-        reconcileJob.trigger();
-
-        for (const strategy of this.strategies) {
-            const job = new Cron(
-                strategy.schedule,
-                { protect: true },
-                async () => {
-                    await this.run(strategy);
-                },
-            );
-            this.jobs.push(job);
-            job.trigger();
-        }
     }
 
     stop(): void {
@@ -169,6 +182,9 @@ export class ScrapingOrchestrator {
                         target: [reports.source, reports.externalId],
                         set: {
                             observedAt: sql`excluded.observed_at`,
+                            endsAt: sql`coalesce(excluded.ends_at, ${reports.endsAt})`,
+                            status: sql`CASE WHEN excluded.status = 'ended' THEN 'ended'::lifecycle_status ELSE ${reports.status} END`,
+                            updatedAt: sql`CASE WHEN excluded.status = 'ended' AND ${reports.status} != 'ended' THEN now() ELSE ${reports.updatedAt} END`,
                         },
                     })
                     .returning();
@@ -204,6 +220,9 @@ export class ScrapingOrchestrator {
                     target: [events.source, events.externalId],
                     set: {
                         observedAt: sql`excluded.observed_at`,
+                        endsAt: sql`coalesce(excluded.ends_at, ${events.endsAt})`,
+                        status: sql`CASE WHEN excluded.status = 'ended' THEN 'ended'::lifecycle_status ELSE ${events.status} END`,
+                        updatedAt: sql`CASE WHEN excluded.status = 'ended' AND ${events.status} != 'ended' THEN now() ELSE ${events.updatedAt} END`,
                     },
                 })
                 .returning();
@@ -215,11 +234,15 @@ export class ScrapingOrchestrator {
     private async reconcileTable(
         tx: DbOrTx,
         table: typeof reports | typeof events,
-    ): Promise<Array<ReportItem | EventItem>> {
+    ): Promise<{
+        started: Array<ReportItem | EventItem>;
+        ended: Array<ReportItem | EventItem>;
+        unknown: Array<ReportItem | EventItem>;
+    }> {
         const now = new Date();
         const staleThreshold = new Date(now.getTime() - 24 * 60 * 60 * 1000);
 
-        await tx
+        const ended = await tx
             .update(table)
             .set({ status: 'ended', updatedAt: now })
             .where(
@@ -228,7 +251,8 @@ export class ScrapingOrchestrator {
                     isNotNull(table.endsAt),
                     lte(table.endsAt, now),
                 ),
-            );
+            )
+            .returning();
 
         const started = await tx
             .update(table)
@@ -243,18 +267,22 @@ export class ScrapingOrchestrator {
             )
             .returning();
 
-        await tx
+        const unknown = await tx
             .update(table)
             .set({ status: 'unknown', updatedAt: now })
             .where(
                 and(
-                    ne(table.status, 'ended'),
-                    ne(table.status, 'unknown'),
+                    eq(table.status, 'ongoing'),
                     isNull(table.endsAt),
                     lte(table.observedAt, staleThreshold),
                 ),
-            );
+            )
+            .returning();
 
-        return started;
+        return {
+            started,
+            ended,
+            unknown,
+        };
     }
 }
