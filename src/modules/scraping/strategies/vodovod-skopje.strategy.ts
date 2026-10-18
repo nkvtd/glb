@@ -1,6 +1,6 @@
 import type { VodovodSkopjeReportInsert } from '../../../core/types/vodovod-skopje.js';
 import {
-    type vodovodSkopjeFeature,
+    type VodovodSkopjeFeature,
     vodovodSkopjeResponseSchema,
 } from '../../../core/validation/vodovod-skopje.js';
 import type { MunicipalityResolver } from '../resolver.js';
@@ -8,7 +8,7 @@ import type { ScrapingStrategy } from '../strategy.interface.js';
 
 export class VodovodSkopjeStrategy
     implements
-        ScrapingStrategy<vodovodSkopjeFeature[], VodovodSkopjeReportInsert>
+        ScrapingStrategy<VodovodSkopjeFeature[], VodovodSkopjeReportInsert>
 {
     readonly source = 'vodovod-skopje';
     readonly url: string;
@@ -23,7 +23,7 @@ export class VodovodSkopjeStrategy
         this.resolver = resolver;
     }
 
-    async fetch(): Promise<vodovodSkopjeFeature[]> {
+    async fetch(): Promise<VodovodSkopjeFeature[]> {
         const response = await fetch(this.url, {
             signal: AbortSignal.timeout(15_000),
         });
@@ -42,7 +42,7 @@ export class VodovodSkopjeStrategy
     }
 
     async parse(
-        items: vodovodSkopjeFeature[],
+        items: VodovodSkopjeFeature[],
     ): Promise<VodovodSkopjeReportInsert[]> {
         const now = new Date();
 

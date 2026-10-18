@@ -44,4 +44,4 @@ export const vodovodSkopjeResponseSchema = z.object({
     features: z.array(vodovodSkopjeFeatureSchema),
 });
 
-export type vodovodSkopjeFeature = z.infer<typeof vodovodSkopjeFeatureSchema>;
+export type VodovodSkopjeFeature = z.infer<typeof vodovodSkopjeFeatureSchema>;
