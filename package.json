@@ -24,6 +24,7 @@
     "dotenv": "^18.0.4",
     "drizzle-kit": "^0.31.11",
     "drizzle-orm": "^0.45.1",
+    "drizzle-zod": "^0.8.3",
     "hono": "^4.13.1",
     "hono-rate-limiter": "^0.5.3",
     "pg": "^8.22.0",
