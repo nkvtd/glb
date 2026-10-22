@@ -136,6 +136,8 @@ export class DiscordChannel implements AlertChannel {
                 return '🌩️';
             case 'wildfire':
                 return '🔥';
+            case 'air_quality':
+                return '💨';
             default:
                 return '📢';
         }

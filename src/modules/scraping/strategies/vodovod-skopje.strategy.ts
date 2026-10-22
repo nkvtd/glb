@@ -50,98 +50,106 @@ export class VodovodSkopjeStrategy
             ({ attributes: a }) => a.title?.trim().toUpperCase() !== 'РАЗ',
         );
 
-        return filteredItems.map(({ attributes: a, geometry }) => {
-            const rawMunicipality = a.Opstina.trim();
-            const rawStreet = a.Ulica.replace(/[“”"]/g, '').trim();
-            const streetNumber = a.adresaBrojDefekt?.trim() || null;
+        return Promise.all(
+            filteredItems.map(async ({ attributes: a, geometry }) => {
+                const rawMunicipality = a.Opstina.trim();
+                const rawStreet = a.Ulica.replace(/[“”"]/g, '').trim();
+                const streetNumber = a.adresaBrojDefekt?.trim() || null;
 
-            const municipality = this.toTitleCase(rawMunicipality);
-            const street = this.toTitleCase(rawStreet);
-            const defectType = this.capitalizeFirst(a.vidDefektName.trim());
+                const municipality = this.toTitleCase(rawMunicipality);
+                const street = this.toTitleCase(rawStreet);
+                const defectType = this.capitalizeFirst(a.vidDefektName.trim());
 
-            const streetAddress = [street, streetNumber]
-                .filter(Boolean)
-                .join(' ');
-            const locationLabel = [streetAddress, municipality]
-                .filter(Boolean)
-                .join(', ');
+                const streetAddress = [street, streetNumber]
+                    .filter(Boolean)
+                    .join(' ');
+                const locationLabel = [streetAddress, municipality]
+                    .filter(Boolean)
+                    .join(', ');
 
-            const startsAt = a.datumZatvorenaVoda ?? a.acceptanceDate;
+                const startsAt = a.datumZatvorenaVoda ?? a.acceptanceDate;
 
-            // status 0 = open, status 1 = cancelled, status 2 = completed
-            const isClosed = a.status === 1 || a.status === 2;
-            const rawEndsAt =
-                a.datumPustenaVoda ?? (isClosed ? a.statusVreme : null);
-            const endsAt =
-                rawEndsAt && rawEndsAt >= startsAt ? rawEndsAt : null;
+                // status 0 = open, status 1 = cancelled, status 2 = completed
+                const isClosed = a.status === 1 || a.status === 2;
+                const rawEndsAt =
+                    a.datumPustenaVoda ?? (isClosed ? a.statusVreme : null);
+                const endsAt =
+                    rawEndsAt && rawEndsAt >= startsAt ? rawEndsAt : null;
 
-            const status =
-                isClosed || (endsAt !== null && now >= endsAt)
-                    ? 'ended'
-                    : now < startsAt
-                      ? 'scheduled'
-                      : 'ongoing';
+                const status =
+                    isClosed || (endsAt !== null && now >= endsAt)
+                        ? 'ended'
+                        : now < startsAt
+                          ? 'scheduled'
+                          : 'ongoing';
 
-            const description = this.formatDescription({
-                defectName: a.vidDefektName.trim(),
-                interventionName: a.vidIntervencijaName?.trim() || null,
-                street,
-                streetNumber,
-                municipality,
-                defectInfo: a.defectInfo?.trim() || null,
-                locationNote: a.lokacija?.trim() || null,
-                urgency: a.itnostString?.trim() || null,
-            });
-
-            const geomWkt = geometry
-                ? `SRID=4326;POINT(${geometry.x} ${geometry.y})`
-                : null;
-
-            const code =
-                this.resolver.resolve(rawMunicipality) ??
-                this.resolver.resolve(municipality);
-
-            return {
-                externalId: String(a.idINT),
-                source: this.source,
-                category: this.category,
-                title: `${defectType}: ${municipality}`,
-                description: description,
-                municipalityCode: code,
-                locationLabel: locationLabel,
-                geom: geomWkt,
-                status: status,
-                observedAt: now,
-                startsAt: startsAt,
-                endsAt: endsAt,
-                rawPayload: {
-                    interventionId: a.idINT,
-                    archiveNumber: a.archiveNumber?.trim() || null,
-                    municipality: rawMunicipality,
-                    street: rawStreet,
-                    streetNumber: streetNumber,
-                    locationNote: a.lokacija?.trim() || null,
-                    defectTypeId: a.vidDefektId ?? null,
-                    defectType: a.vidDefektName.trim(),
-                    interventionTypeId: a.vidIntervencijaId ?? null,
-                    interventionType: a.vidIntervencijaName?.trim() || null,
+                const description = this.formatDescription({
+                    defectName: a.vidDefektName.trim(),
+                    interventionName: a.vidIntervencijaName?.trim() || null,
+                    street,
+                    streetNumber,
+                    municipality,
                     defectInfo: a.defectInfo?.trim() || null,
+                    locationNote: a.lokacija?.trim() || null,
                     urgency: a.itnostString?.trim() || null,
-                    notifiedOutage: a.izvesteniPrekin?.trim() || null,
-                    rawStatus: a.status,
-                    acceptedAt: a.acceptanceDate,
-                    statusChangedAt: a.statusVreme ?? null,
-                    waterShutoffAt: a.datumZatvorenaVoda ?? null,
-                    waterRestoredAt: a.datumPustenaVoda ?? null,
-                    waterShutoffType: a.zatvorenaVodaTip ?? null,
-                    hydroforPowerOutage: a.prekinStrujaHidrofor === 1,
-                    inspectionCompleted: a.naprevenUvid === 1,
-                    coordinates: geometry
-                        ? { lng: geometry.x, lat: geometry.y }
-                        : null,
-                },
-            };
-        });
+                });
+
+                const geomWkt = geometry
+                    ? `SRID=4326;POINT(${geometry.x} ${geometry.y})`
+                    : null;
+
+                const code =
+                    this.resolver.resolveText(rawMunicipality) ??
+                    this.resolver.resolveText(municipality) ??
+                    (geometry
+                        ? await this.resolver.resolveCoords(
+                              geometry.x,
+                              geometry.y,
+                          )
+                        : null);
+
+                return {
+                    externalId: String(a.idINT),
+                    source: this.source,
+                    category: this.category,
+                    title: `${defectType}: ${municipality}`,
+                    description: description,
+                    municipalityCode: code,
+                    locationLabel: locationLabel,
+                    geom: geomWkt,
+                    status: status,
+                    observedAt: now,
+                    startsAt: startsAt,
+                    endsAt: endsAt,
+                    rawPayload: {
+                        interventionId: a.idINT,
+                        archiveNumber: a.archiveNumber?.trim() || null,
+                        municipality: rawMunicipality,
+                        street: rawStreet,
+                        streetNumber: streetNumber,
+                        locationNote: a.lokacija?.trim() || null,
+                        defectTypeId: a.vidDefektId ?? null,
+                        defectType: a.vidDefektName.trim(),
+                        interventionTypeId: a.vidIntervencijaId ?? null,
+                        interventionType: a.vidIntervencijaName?.trim() || null,
+                        defectInfo: a.defectInfo?.trim() || null,
+                        urgency: a.itnostString?.trim() || null,
+                        notifiedOutage: a.izvesteniPrekin?.trim() || null,
+                        rawStatus: a.status,
+                        acceptedAt: a.acceptanceDate,
+                        statusChangedAt: a.statusVreme ?? null,
+                        waterShutoffAt: a.datumZatvorenaVoda ?? null,
+                        waterRestoredAt: a.datumPustenaVoda ?? null,
+                        waterShutoffType: a.zatvorenaVodaTip ?? null,
+                        hydroforPowerOutage: a.prekinStrujaHidrofor === 1,
+                        inspectionCompleted: a.naprevenUvid === 1,
+                        coordinates: geometry
+                            ? { lng: geometry.x, lat: geometry.y }
+                            : null,
+                    },
+                };
+            }),
+        );
     }
 
     private formatDescription(params: {

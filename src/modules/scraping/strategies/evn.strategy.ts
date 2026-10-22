@@ -68,8 +68,8 @@ export class EvnStrategy
             const locationLabel = this.formatLocation(place);
             const description = this.formatDescription(address);
             const code =
-                this.resolver.resolve(locationLabel) ??
-                this.resolver.resolve(place);
+                this.resolver.resolveText(locationLabel) ??
+                this.resolver.resolveText(place);
 
             return {
                 externalId,

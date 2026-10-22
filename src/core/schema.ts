@@ -20,6 +20,7 @@ export const lifecycleStatusEnum = pgEnum('lifecycle_status', [
     'ongoing',
     'ended',
     'unknown',
+    'omitted',
 ]);
 
 const pointGeometry = customType<{ data: string }>({

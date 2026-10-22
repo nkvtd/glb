@@ -1,0 +1,1 @@
+ALTER TYPE "public"."lifecycle_status" ADD VALUE 'omitted';

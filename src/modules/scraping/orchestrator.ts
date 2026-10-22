@@ -7,6 +7,7 @@ import {
     isNotNull,
     isNull,
     lte,
+    notInArray,
     or,
     sql,
 } from 'drizzle-orm';
@@ -79,7 +80,7 @@ export class ScrapingOrchestrator {
                     ];
 
                     logger.info(
-                        `[Worker:reconciler] transitioned ${started.length} entries to ongoing, ${ended.length} entries to ended, and ${unknown.length} entries to unknown.`,
+                        `[Worker:reconciler] transitioned ${started.length} ${started.length === 1 ? 'entry' : 'entries'} to ongoing, ${ended.length} ${ended.length === 1 ? 'entry' : 'entries'} to ended, and ${unknown.length} ${unknown.length === 1 ? 'entry' : 'entries'} to unknown.`,
                     );
 
                     if (started.length > 0) {
@@ -175,6 +176,65 @@ export class ScrapingOrchestrator {
 
                 const existingSet = new Set(existing.map((e) => e.externalId));
 
+                const supersededLocations = Array.from(
+                    new Set(
+                        reportRows
+                            .filter(
+                                (r) =>
+                                    !existingSet.has(r.externalId) &&
+                                    !r.endsAt &&
+                                    Boolean(r.locationLabel),
+                            )
+                            .map((r) => r.locationLabel as string),
+                    ),
+                );
+
+                const alreadyOngoingLocations = new Set<string>();
+
+                if (supersededLocations.length > 0) {
+                    const supersededRows = await tx
+                        .select({
+                            id: reports.id,
+                            locationLabel: reports.locationLabel,
+                            status: reports.status,
+                        })
+                        .from(reports)
+                        .where(
+                            and(
+                                eq(reports.source, strategy.source),
+                                inArray(reports.status, ['ongoing', 'omitted']),
+                                isNull(reports.endsAt),
+                                notInArray(reports.externalId, externalIds),
+                                inArray(
+                                    reports.locationLabel,
+                                    supersededLocations,
+                                ),
+                            ),
+                        );
+
+                    if (supersededRows.length > 0) {
+                        await tx
+                            .update(reports)
+                            .set({
+                                status: 'ended',
+                                endsAt: sql`now()`,
+                                updatedAt: sql`now()`,
+                            })
+                            .where(
+                                inArray(
+                                    reports.id,
+                                    supersededRows.map((r) => r.id),
+                                ),
+                            );
+
+                        for (const row of supersededRows) {
+                            if (row.status === 'ongoing' && row.locationLabel) {
+                                alreadyOngoingLocations.add(row.locationLabel);
+                            }
+                        }
+                    }
+                }
+
                 const savedRows = await tx
                     .insert(reports)
                     .values(reportRows)
@@ -190,7 +250,12 @@ export class ScrapingOrchestrator {
                     .returning();
 
                 return savedRows.filter(
-                    (row) => !existingSet.has(row.externalId),
+                    (row) =>
+                        !existingSet.has(row.externalId) &&
+                        !(
+                            row.locationLabel &&
+                            alreadyOngoingLocations.has(row.locationLabel)
+                        ),
                 );
             }
 
@@ -244,12 +309,27 @@ export class ScrapingOrchestrator {
 
         const ended = await tx
             .update(table)
-            .set({ status: 'ended', updatedAt: now })
+            .set({
+                status: 'ended',
+                endsAt: sql`coalesce(${table.endsAt}, now())`,
+                updatedAt: now,
+            })
             .where(
-                and(
-                    inArray(table.status, ['scheduled', 'ongoing']),
-                    isNotNull(table.endsAt),
-                    lte(table.endsAt, now),
+                or(
+                    and(
+                        inArray(table.status, [
+                            'scheduled',
+                            'ongoing',
+                            'omitted',
+                        ]),
+                        isNotNull(table.endsAt),
+                        lte(table.endsAt, now),
+                    ),
+                    and(
+                        eq(table.status, 'omitted'),
+                        isNull(table.endsAt),
+                        lte(table.observedAt, staleThreshold),
+                    ),
                 ),
             )
             .returning();
