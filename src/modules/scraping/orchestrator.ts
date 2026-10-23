@@ -278,6 +278,29 @@ export class ScrapingOrchestrator {
 
             const existingSet = new Set(existing.map((e) => e.externalId));
 
+            const hasNewOpenEnded = eventRows.some(
+                (r) => !existingSet.has(r.externalId) && !r.endsAt,
+            );
+
+            if (hasNewOpenEnded) {
+                await tx
+                    .update(events)
+                    .set({
+                        status: 'ended',
+                        endsAt: sql`now()`,
+                        updatedAt: sql`now()`,
+                    })
+                    .where(
+                        and(
+                            eq(events.source, strategy.source),
+                            eq(events.category, strategy.category),
+                            inArray(events.status, ['ongoing', 'omitted']),
+                            isNull(events.endsAt),
+                            notInArray(events.externalId, externalIds),
+                        ),
+                    );
+            }
+
             const savedRows = await tx
                 .insert(events)
                 .values(eventRows)
@@ -311,25 +334,13 @@ export class ScrapingOrchestrator {
             .update(table)
             .set({
                 status: 'ended',
-                endsAt: sql`coalesce(${table.endsAt}, now())`,
                 updatedAt: now,
             })
             .where(
-                or(
-                    and(
-                        inArray(table.status, [
-                            'scheduled',
-                            'ongoing',
-                            'omitted',
-                        ]),
-                        isNotNull(table.endsAt),
-                        lte(table.endsAt, now),
-                    ),
-                    and(
-                        inArray(table.status, ['ongoing', 'omitted']),
-                        isNull(table.endsAt),
-                        lte(table.observedAt, staleThreshold),
-                    ),
+                and(
+                    inArray(table.status, ['scheduled', 'ongoing', 'omitted']),
+                    isNotNull(table.endsAt),
+                    lte(table.endsAt, now),
                 ),
             )
             .returning();
@@ -352,7 +363,7 @@ export class ScrapingOrchestrator {
             .set({ status: 'unknown', updatedAt: now })
             .where(
                 and(
-                    eq(table.status, 'ongoing'),
+                    inArray(table.status, ['ongoing', 'omitted']),
                     isNull(table.endsAt),
                     lte(table.observedAt, staleThreshold),
                 ),
