@@ -25,7 +25,7 @@ export class VodovodSkopjeStrategy
 
     async fetch(): Promise<VodovodSkopjeFeature[]> {
         const response = await fetch(this.url, {
-            signal: AbortSignal.timeout(15_000),
+            signal: AbortSignal.timeout(60_000),
         });
 
         if (!response.ok) {
