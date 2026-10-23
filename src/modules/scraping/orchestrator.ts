@@ -326,7 +326,7 @@ export class ScrapingOrchestrator {
                         lte(table.endsAt, now),
                     ),
                     and(
-                        eq(table.status, 'omitted'),
+                        inArray(table.status, ['ongoing', 'omitted']),
                         isNull(table.endsAt),
                         lte(table.observedAt, staleThreshold),
                     ),
