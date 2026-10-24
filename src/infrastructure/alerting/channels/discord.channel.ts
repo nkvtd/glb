@@ -50,6 +50,11 @@ export class DiscordChannel implements AlertChannel {
 
         const fields = [
             {
+                name: 'Извор',
+                value: item.source,
+                inline: true,
+            },
+            {
                 name: 'Статус',
                 value: statusMeta.label,
                 inline: true,
@@ -59,8 +64,8 @@ export class DiscordChannel implements AlertChannel {
         if (location) {
             fields.push({
                 name: 'Локација',
-                value: this.truncate(location, 1024),
-                inline: false,
+                value: location,
+                inline: true,
             });
         }
 
@@ -88,7 +93,7 @@ export class DiscordChannel implements AlertChannel {
             color: statusMeta.color,
             fields,
             footer: {
-                text: `ID: ${item.externalId}`,
+                text: `glb::relay`,
             },
             timestamp: item.observedAt.toISOString(),
         };

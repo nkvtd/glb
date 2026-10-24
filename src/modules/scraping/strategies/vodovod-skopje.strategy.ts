@@ -102,10 +102,9 @@ export class VodovodSkopjeStrategy
                     this.resolver.resolveText(rawMunicipality) ??
                     this.resolver.resolveText(municipality) ??
                     (geometry
-                        ? await this.resolver.resolveCoords(
-                              geometry.x,
-                              geometry.y,
-                          )
+                        ? await this.resolver
+                              .resolveCoords(geometry.x, geometry.y)
+                              .then((result) => result?.code ?? null)
                         : null);
 
                 return {

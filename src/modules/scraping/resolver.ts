@@ -5,7 +5,10 @@ import type { DbOrTx } from '../../infrastructure/database/db.js';
 export class MunicipalityResolver {
     private readonly db: DbOrTx;
     private readonly textCache = new Map<string, string>();
-    private readonly coordsCache = new Map<string, string | null>();
+    private readonly coordsCache = new Map<
+        string,
+        { code: string; name: string } | null
+    >();
     private readonly regionCache = new Map<
         string,
         Array<{ code: string; nameMk: string }>
@@ -76,7 +79,7 @@ export class MunicipalityResolver {
     async resolveCoords(
         lng?: number | null,
         lat?: number | null,
-    ): Promise<string | null> {
+    ): Promise<{ code: string; name: string } | null> {
         if (
             lng === undefined ||
             lng === null ||
@@ -95,7 +98,10 @@ export class MunicipalityResolver {
 
         const point = sql`ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326)`;
         const [row] = await this.db
-            .select({ code: schema.municipalities.code })
+            .select({
+                code: schema.municipalities.code,
+                name: schema.municipalities.nameMk,
+            })
             .from(schema.municipalities)
             .where(
                 sql`ST_Covers(${schema.municipalities.boundaryGeom}, ${point})`,
@@ -103,9 +109,12 @@ export class MunicipalityResolver {
             .limit(1);
 
         const code = row?.code ?? null;
-        this.coordsCache.set(key, code);
+        const name = row?.name ?? null;
 
-        return code;
+        const resolved = code && name ? { code, name } : null;
+        this.coordsCache.set(key, resolved);
+
+        return resolved;
     }
 
     resolveRegion(

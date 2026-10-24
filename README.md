@@ -110,7 +110,7 @@ It operates as two strictly separated processes sharing a single PostgreSQL + Po
 ┌───────────────────────────────────────────────────────────────────────────┐
 │                      Upstream Civic Data Sources                          │
 │        EVN (Power)   •   Vodovod Skopje (Water)   •   MOEPP (Air)         │
-│        AMSM (Fuel)   •   Meteoalarm (Weather)                             │
+│        AMSM (Fuel)   •   Meteoalarm (Weather)     •   Sensor.Community    │
 └───────────────────────────────────────────────────────────────────────────┘
                                    │  Scheduled Cron Jobs (*/30 * * * *)
                                    ▼
@@ -142,7 +142,7 @@ It operates as two strictly separated processes sharing a single PostgreSQL + Po
 
 ## Data Sources & Scrapers
 
-The worker currently runs four active scraping strategies on their respective cron schedules, alongside the 15-minute status reconciler:
+The worker currently runs several active scraping strategies on their respective cron schedules, alongside the 15-minute status reconciler:
 
 | Source ID | Category | Target | Schedule | Upstream Provider | Resolution & Behavior |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -151,6 +151,7 @@ The worker currently runs four active scraping strategies on their respective cr
 | `moepp` | `air_quality` | `reports` | `*/30 * * * *` | **Ministry of Environment (MOEPP)** | Fetches monitoring stations and hourly pollutant concentrations (`PM10`, `PM2.5`, `NO₂`, `O₃`, `SO₂`, `CO`). Resolves municipalities via PostGIS point-in-polygon (`ST_Covers`) with text fallback. Marks poor air quality (`index 04–06`) as `ongoing` (triggering a single alert per smog episode) and normal readings as `omitted` (stored for API querying without alert spam). |
 | `amsm-fuel` | `fuel_price` | `events` | `0 */2 * * *` | **AMSM (Auto Moto Association)** | Fetches retail fuel prices (`ЕУРОСУПЕР БС-95`, `ЕУРОСУПЕР БС-98`, `ЕУРОДИЗЕЛ`) in MKD and EUR. Hashes the active price decision so new events and alerts are only dispatched when retail prices change, automatically superseding the previous price record. |
 | `meteoalarm` | `weather` | `reports` | `*/15 * * * *` | **Meteoalarm (EUMETNET / UHMR)** | Scrapes official CAP weather warnings. Sanitizes text encodings, maps awareness types and severity levels into Macedonian prose, and fans out regional alerts (`NUTS3`) across all member municipalities via `resolveRegion()`. |
+| `sensor-community` | `air_quality` | `reports` | `*/15 * * * *` | **Sensor.Community (airRohr)** | Aggregates private air quality and weather sensors (`PM10`, `PM2.5`, temperature, humidity, pressure) per municipality. Applies a 4-stage sanitization pipeline (filtering indoor nodes, dead fans, and fog condensation spikes) and computes a 20% trimmed mean. |
 
 > **Supported Schema Categories & Statuses:**
 > - **Localized Reports (`reports`):** `power`, `water`, `road`, `weather`, `wildfire`, `air_quality`

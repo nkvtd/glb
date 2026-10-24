@@ -7,6 +7,7 @@ import { AmsmFuelStrategy } from './modules/scraping/strategies/amsm-fuel.strate
 import { EvnStrategy } from './modules/scraping/strategies/evn.strategy.js';
 import { MeteoalarmStrategy } from './modules/scraping/strategies/meteoalarm.strategy.js';
 import { MoeppStrategy } from './modules/scraping/strategies/moepp.strategy.js';
+import { SensorCommunityStrategy } from './modules/scraping/strategies/sensor-community.strategy.js';
 import { VodovodSkopjeStrategy } from './modules/scraping/strategies/vodovod-skopje.strategy.js';
 
 async function main() {
@@ -40,6 +41,11 @@ async function main() {
         ),
         new MeteoalarmStrategy(
             'https://feeds.meteoalarm.org/api/v1/warnings/feeds-republic-of-north-macedonia',
+            '*/15 * * * *',
+            resolver,
+        ),
+        new SensorCommunityStrategy(
+            'https://data.sensor.community/airrohr/v1/filter/country=MK',
             '*/15 * * * *',
             resolver,
         ),

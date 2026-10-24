@@ -104,10 +104,9 @@ export class MoeppStrategy
                 POOR_AIR_INDEX_CODES.has(measurement.aQ_Index.code);
 
             const municipalityCode =
-                (await this.resolver.resolveCoords(
-                    station.longitude,
-                    station.latitude,
-                )) ??
+                (await this.resolver
+                    .resolveCoords(station.longitude, station.latitude)
+                    .then((result) => result?.code ?? null)) ??
                 this.resolver.resolveText(station.name) ??
                 this.resolver.resolveText(station.city) ??
                 this.resolver.resolveText(station.address);
