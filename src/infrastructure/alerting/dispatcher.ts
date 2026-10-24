@@ -9,8 +9,10 @@ export class AlertDispatcher {
     async init(): Promise<void> {
         this.channels.length = 0;
 
-        if (config.DISCORD_WEBHOOK_URL) {
-            this.channels.push(new DiscordChannel(config.DISCORD_WEBHOOK_URL));
+        if (config.DISCORD_WEBHOOK_URLS) {
+            for (const url of config.DISCORD_WEBHOOK_URLS) {
+                this.channels.push(new DiscordChannel(url));
+            }
         }
 
         // Open for more optional channels:

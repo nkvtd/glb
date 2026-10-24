@@ -119,7 +119,7 @@ It operates as two strictly separated processes sharing a single PostgreSQL + Po
 │  • Zod Upstream Validation & Macedonian Prose Formatting                  │
 │  • MunicipalityResolver (PostGIS ST_Covers + Text Cascade)                │
 │  • Transactional Upsert, Deduplication & 15-min Lifecycle Reconciler      │
-│  • AlertDispatcher -> Webhook Channel (glb::relay)                        │
+│  • AlertDispatcher -> Webhook Channels (glb::relay)                       │
 └───────────────────────────────────────────────────────────────────────────┘
                                    │  Drizzle ORM (node-postgres)
                                    ▼
@@ -336,7 +336,7 @@ PORT=8080
 DATABASE_URL=postgresql://postgres:password@localhost:5432/glb-db
 
 # Discord Webhook URL for real-time alerts (optional)
-DISCORD_WEBHOOK_URL=[https://discord.com/api/webhooks/](https://discord.com/api/webhooks/)...
+DISCORD_WEBHOOK_URLS=https://discord.com/api/webhooks/aaa/bbb,https://discord.com/api/webhooks/ccc/ddd ...
 ```
 
 ### 3. Build, Migrate & Seed GIS Boundaries
@@ -404,7 +404,7 @@ The production stack consists of four services:
    docker network create edge-proxy
    ```
 
-3. Configure your `.env` file (e.g., `DISCORD_WEBHOOK_URL`, `POSTGRES_USER`, `POSTGRES_DB`) and start the stack:
+3. Configure your `.env` file (e.g., `DISCORD_WEBHOOK_URLS`, `POSTGRES_USER`, `POSTGRES_DB`) and start the stack:
    ```bash
    docker compose pull
    docker compose up -d
