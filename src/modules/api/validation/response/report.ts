@@ -21,7 +21,7 @@ export const reportDtoSchema = createSelectSchema(reports)
 export type ReportDto = z.infer<typeof reportDtoSchema>;
 
 export function toReportDto(
-    row: ReportItem & { lng: number | null; lat: number | null },
+    row: Omit<ReportItem, 'geom'> & { lng: number | null; lat: number | null },
 ): ReportDto {
     return reportDtoSchema.parse({
         ...row,

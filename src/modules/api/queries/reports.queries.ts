@@ -23,8 +23,10 @@ import { type ReportDto, toReportDto } from '../validation/response/report.js';
 import { buildCursorCondition, buildPaginatedResponse } from './util/cursor.js';
 import { buildContainsPattern } from './util/ilike.js';
 
+const { geom, ...reportColumns } = getTableColumns(reports);
+
 const reportSelect = {
-    ...getTableColumns(reports),
+    ...reportColumns,
     lng: sql<number | null>`ST_X(${reports.geom})`,
     lat: sql<number | null>`ST_Y(${reports.geom})`,
 };
@@ -156,7 +158,7 @@ function getReportSortExpression(sortBy: ReportsQuery['sortBy']): SQL {
 }
 
 function extractReportSortValue(
-    row: ReportItem,
+    row: Omit<ReportItem, 'geom'>,
     sortBy: ReportsQuery['sortBy'],
 ): number | string {
     switch (sortBy) {
