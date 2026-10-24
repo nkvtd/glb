@@ -6,6 +6,10 @@ export class MunicipalityResolver {
     private readonly db: DbOrTx;
     private readonly textCache = new Map<string, string>();
     private readonly coordsCache = new Map<string, string | null>();
+    private readonly regionCache = new Map<
+        string,
+        Array<{ code: string; nameMk: string }>
+    >();
 
     constructor(db: DbOrTx) {
         this.db = db;
@@ -19,14 +23,26 @@ export class MunicipalityResolver {
                 code: schema.municipalities.code,
                 nameMk: schema.municipalities.nameMk,
                 nameEn: schema.municipalities.nameEn,
+                regionCode: schema.municipalities.regionCode,
             })
             .from(schema.municipalities);
 
         const entries: Array<[string, string]> = [];
+        const seenInRegion = new Set<string>();
 
         for (const row of rows) {
             entries.push([this.normalize(row.nameMk), row.code]);
             entries.push([this.normalize(row.nameEn), row.code]);
+
+            const regionKey = row.regionCode.trim().toUpperCase();
+            const dedupeKey = `${regionKey}:${this.normalize(row.nameMk)}`;
+
+            if (!seenInRegion.has(dedupeKey)) {
+                seenInRegion.add(dedupeKey);
+                const list = this.regionCache.get(regionKey) ?? [];
+                list.push({ code: row.code, nameMk: row.nameMk });
+                this.regionCache.set(regionKey, list);
+            }
         }
 
         entries.sort((a, b) => b[0].length - a[0].length);
@@ -90,6 +106,13 @@ export class MunicipalityResolver {
         this.coordsCache.set(key, code);
 
         return code;
+    }
+
+    resolveRegion(
+        regionCode?: string | null,
+    ): Array<{ code: string; nameMk: string }> {
+        if (!regionCode) return [];
+        return this.regionCache.get(regionCode.trim().toUpperCase()) ?? [];
     }
 
     private normalize(text: string): string {

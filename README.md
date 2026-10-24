@@ -110,7 +110,7 @@ It operates as two strictly separated processes sharing a single PostgreSQL + Po
 ┌───────────────────────────────────────────────────────────────────────────┐
 │                      Upstream Civic Data Sources                          │
 │        EVN (Power)   •   Vodovod Skopje (Water)   •   MOEPP (Air)         │
-│        AMSM (Fuel)                                                        │
+│        AMSM (Fuel)   •   Meteoalarm (Weather)                             │
 └───────────────────────────────────────────────────────────────────────────┘
                                    │  Scheduled Cron Jobs (*/30 * * * *)
                                    ▼
@@ -150,6 +150,7 @@ The worker currently runs four active scraping strategies on their respective cr
 | `vodovod-skopje` | `water` | `reports` | `*/30 * * * *` | **JP Vodovod i Kanalizacija – Skopje** | Queries the ArcGIS MapServer for active and recent water/sewage interventions. Extracts `POINT(lng lat)` geometries, formats urgency and street details into prose, and resolves municipalities via text cascade with a PostGIS point-in-polygon fallback. |
 | `moepp` | `air_quality` | `reports` | `*/30 * * * *` | **Ministry of Environment (MOEPP)** | Fetches monitoring stations and hourly pollutant concentrations (`PM10`, `PM2.5`, `NO₂`, `O₃`, `SO₂`, `CO`). Resolves municipalities via PostGIS point-in-polygon (`ST_Covers`) with text fallback. Marks poor air quality (`index 04–06`) as `ongoing` (triggering a single alert per smog episode) and normal readings as `omitted` (stored for API querying without alert spam). |
 | `amsm-fuel` | `fuel_price` | `events` | `0 */2 * * *` | **AMSM (Auto Moto Association)** | Fetches retail fuel prices (`ЕУРОСУПЕР БС-95`, `ЕУРОСУПЕР БС-98`, `ЕУРОДИЗЕЛ`) in MKD and EUR. Hashes the active price decision so new events and alerts are only dispatched when retail prices change, automatically superseding the previous price record. |
+| `meteoalarm` | `weather` | `reports` | `*/15 * * * *` | **Meteoalarm (EUMETNET / UHMR)** | Scrapes official CAP weather warnings. Sanitizes text encodings, maps awareness types and severity levels into Macedonian prose, and fans out regional alerts (`NUTS3`) across all member municipalities via `resolveRegion()`. |
 
 > **Supported Schema Categories & Statuses:**
 > - **Localized Reports (`reports`):** `power`, `water`, `road`, `weather`, `wildfire`, `air_quality`
@@ -424,7 +425,7 @@ glb/
 │   │   ├── config.ts                    # Zod-validated environment configuration
 │   │   ├── enums.ts                     # Report and event category definitions
 │   │   ├── schema.ts                    # Drizzle ORM tables, PostGIS types & enums
-│   │   ├── types/                       # Typed rawPayloads (evn, moepp, vodovod-skopje, amsm-fuel)
+│   │   ├── types/                       # Typed rawPayloads (evn, moepp, vodovod-skopje, amsm-fuel, meteoalarm)
 │   │   └── validation/                  # Upstream response Zod schemas
 │   ├── infrastructure/
 │   │   ├── alerting/                    # AlertChannel interface, Dispatcher & DiscordChannel

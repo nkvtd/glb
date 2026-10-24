@@ -5,6 +5,7 @@ import { ScrapingOrchestrator } from './modules/scraping/orchestrator.js';
 import { MunicipalityResolver } from './modules/scraping/resolver.js';
 import { AmsmFuelStrategy } from './modules/scraping/strategies/amsm-fuel.strategy.js';
 import { EvnStrategy } from './modules/scraping/strategies/evn.strategy.js';
+import { MeteoalarmStrategy } from './modules/scraping/strategies/meteoalarm.strategy.js';
 import { MoeppStrategy } from './modules/scraping/strategies/moepp.strategy.js';
 import { VodovodSkopjeStrategy } from './modules/scraping/strategies/vodovod-skopje.strategy.js';
 
@@ -36,6 +37,11 @@ async function main() {
         new AmsmFuelStrategy(
             'https://amsm.mk/wp-json/wp/v2/cena-goriva?slug=makedonija',
             '0 */2 * * *',
+        ),
+        new MeteoalarmStrategy(
+            'https://feeds.meteoalarm.org/api/v1/warnings/feeds-republic-of-north-macedonia',
+            '*/15 * * * *',
+            resolver,
         ),
     ];
 
