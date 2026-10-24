@@ -9,14 +9,12 @@ export class AlertDispatcher {
     async init(): Promise<void> {
         this.channels.length = 0;
 
-        if (config.DISCORD_WEBHOOK_URLS) {
-            for (const url of config.DISCORD_WEBHOOK_URLS) {
-                this.channels.push(new DiscordChannel(url));
-            }
+        for (const url of config.DISCORD_WEBHOOK_URLS) {
+            this.channels.push(new DiscordChannel(url));
         }
 
         // Open for more optional channels:
-        // e.g.,if (config.SLACK_WEBHOOK_URL) { ... }
+        // e.g.,for (const url of config.SLACK_WEBHOOK_URLS) { ... }
 
         const names = this.channels.map((c) => c.name).join(', ');
         logger.info(
