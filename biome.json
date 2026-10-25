@@ -6,17 +6,17 @@
         "useIgnoreFile": true
     },
     "files": {
-        "includes": ["**/src/**"],
+        "includes": ["**/src/**", "**/tests/**"],
         "ignoreUnknown": false
     },
     "formatter": {
-        "includes": ["src/**/*.ts"],
+        "includes": ["src/**/*.ts", "tests/**/*.ts"],
         "enabled": true,
         "indentStyle": "space",
         "indentWidth": 4
     },
     "linter": {
-        "includes": ["src/**/*.ts"],
+        "includes": ["src/**/*.ts", "tests/**/*.ts"],
         "enabled": true,
         "rules": {
             "preset": "recommended"

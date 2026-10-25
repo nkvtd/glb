@@ -81,7 +81,7 @@ It operates as two strictly separated processes sharing a single PostgreSQL + Po
 
 - **Strategy-Driven Scraping Engine:** Each upstream provider is encapsulated in a strongly typed `ScrapingStrategy` validated at runtime with **Zod** and scheduled via **Croner**.
 - **Hybrid PostGIS Spatial Resolution:** Maps both exact WGS 84 coordinates (`ST_Covers`) and raw Macedonian/English settlement strings (`MunicipalityResolver`) to official administrative `PCODEX` identifiers.
-- **Automated Lifecycle Reconciliation:** A 15-minute background reconciler automatically transitions records between `scheduled`, `ongoing`, `ended`, `omitted`, and `unknown` states—handling open-ended superseding and stale upstream feeds without manual intervention.
+- **Automated Lifecycle Reconciliation:** A 15-minute background reconciler automatically transitions records between `scheduled`, `ongoing`, `ended`, `omitted`, and `unknown` states—handling open-ended state-feed superseding and stale upstream feeds without manual intervention.
 - **Single-Alert Relay (`glb::relay`):** Pushes color-coded embeds to Webhook channels (Discord, etc) in rate-limited batches when incidents become `ongoing`, tracking active locations so consecutive hourly updates never spam the channel.
 - **Keyset Cursor Pagination:** Deterministic tuple-based cursor pagination (`(sortExpr, id)`) across all collection endpoints with zero offset performance degradation.
 - **Hardened Read-Only API:** Built-in IP rate limiting (`60 req/min` aware of Cloudflare Tunnel headers), strict request/response DTO validation, security headers, and structured **Winston** rotating logs.
@@ -376,9 +376,10 @@ npm run dev:worker
 | `npm run db:generate` | `drizzle-kit generate` | Generate new SQL migration files from `src/core/schema.ts`. |
 | `npm run db:migrate` | `drizzle-kit migrate` | Apply pending SQL migrations to the database. |
 | `npm run db:seed` | `node dist/infrastructure/database/seed.js` | Seed `data/mkd_admbnda_adm2_2025_AB.geojson` into `municipalities`. |
-| `npm run lint` | `biome check src` | Run Biome linter and formatter checks. |
-| `npm run lint:fix` | `biome check --write src` | Automatically fix lint and formatting issues with Biome. |
-| `npm run format` | `biome format --write src` | Format `src/` using Biome (`4` spaces, single quotes). |
+| `npm test` | `node --import tsx --test "tests/*.test.ts"` | Run the automated test suite. |
+| `npm run lint` | `biome check src tests` | Run Biome linter and formatter checks. |
+| `npm run lint:fix` | `biome check --write src tests` | Automatically fix lint and formatting issues with Biome. |
+| `npm run format` | `biome format --write src tests` | Format source and tests using Biome (`4` spaces, single quotes). |
 
 ---
 

@@ -30,7 +30,7 @@
     "pg": "^8.23.1",
     "winston": "^3.19.0",
     "winston-daily-rotate-file": "^5.0.0",
-    "zod": "^4.4.3",
+    "zod": "^4.6.6",
     "zod-validation-error": "^5.0.0"
   },
   "devDependencies": {
@@ -46,9 +46,10 @@
   },
   "scripts": {
     "build": "rimraf dist && node esbuild.config.js",
-    "lint": "biome check src",
-    "lint:fix": "biome check --write src",
-    "format": "biome format --write src",
+    "test": "node --import tsx --test \"tests/*.test.ts\"",
+    "lint": "biome check src tests",
+    "lint:fix": "biome check --write src tests",
+    "format": "biome format --write src tests",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:seed": "node dist/infrastructure/database/seed.js",
