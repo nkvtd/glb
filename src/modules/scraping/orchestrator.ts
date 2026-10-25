@@ -176,60 +176,70 @@ export class ScrapingOrchestrator {
 
                 const existingSet = new Set(existing.map((e) => e.externalId));
 
-                const supersededLocations = Array.from(
-                    new Set(
-                        reportRows
-                            .filter(
-                                (r) =>
-                                    !existingSet.has(r.externalId) &&
-                                    !r.endsAt &&
-                                    Boolean(r.locationLabel),
-                            )
-                            .map((r) => r.locationLabel as string),
-                    ),
-                );
-
                 const alreadyOngoingLocations = new Set<string>();
 
-                if (supersededLocations.length > 0) {
-                    const supersededRows = await tx
-                        .select({
-                            id: reports.id,
-                            locationLabel: reports.locationLabel,
-                            status: reports.status,
-                        })
-                        .from(reports)
-                        .where(
-                            and(
-                                eq(reports.source, strategy.source),
-                                inArray(reports.status, ['ongoing', 'omitted']),
-                                isNull(reports.endsAt),
-                                notInArray(reports.externalId, externalIds),
-                                inArray(
-                                    reports.locationLabel,
-                                    supersededLocations,
-                                ),
-                            ),
-                        );
+                if (strategy.stateFeed) {
+                    const supersededLocations = Array.from(
+                        new Set(
+                            reportRows
+                                .filter(
+                                    (r) =>
+                                        !existingSet.has(r.externalId) &&
+                                        !r.endsAt &&
+                                        Boolean(r.locationLabel),
+                                )
+                                .map((r) => r.locationLabel as string),
+                        ),
+                    );
 
-                    if (supersededRows.length > 0) {
-                        await tx
-                            .update(reports)
-                            .set({
-                                status: 'ended',
-                                endsAt: sql`now()`,
-                                updatedAt: sql`now()`,
+                    if (supersededLocations.length > 0) {
+                        const supersededRows = await tx
+                            .select({
+                                id: reports.id,
+                                locationLabel: reports.locationLabel,
+                                status: reports.status,
                             })
+                            .from(reports)
                             .where(
-                                inArray(
-                                    reports.id,
-                                    supersededRows.map((r) => r.id),
+                                and(
+                                    eq(reports.source, strategy.source),
+                                    inArray(reports.status, [
+                                        'ongoing',
+                                        'omitted',
+                                    ]),
+                                    isNull(reports.endsAt),
+                                    notInArray(reports.externalId, externalIds),
+                                    inArray(
+                                        reports.locationLabel,
+                                        supersededLocations,
+                                    ),
                                 ),
                             );
 
-                        for (const row of supersededRows) {
-                            if (row.status === 'ongoing' && row.locationLabel) {
-                                alreadyOngoingLocations.add(row.locationLabel);
+                        if (supersededRows.length > 0) {
+                            await tx
+                                .update(reports)
+                                .set({
+                                    status: 'ended',
+                                    endsAt: sql`now()`,
+                                    updatedAt: sql`now()`,
+                                })
+                                .where(
+                                    inArray(
+                                        reports.id,
+                                        supersededRows.map((r) => r.id),
+                                    ),
+                                );
+
+                            for (const row of supersededRows) {
+                                if (
+                                    row.status === 'ongoing' &&
+                                    row.locationLabel
+                                ) {
+                                    alreadyOngoingLocations.add(
+                                        row.locationLabel,
+                                    );
+                                }
                             }
                         }
                     }
@@ -282,7 +292,7 @@ export class ScrapingOrchestrator {
                 (r) => !existingSet.has(r.externalId) && !r.endsAt,
             );
 
-            if (hasNewOpenEnded) {
+            if (strategy.stateFeed && hasNewOpenEnded) {
                 await tx
                     .update(events)
                     .set({

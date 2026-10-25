@@ -15,6 +15,7 @@ export class AmsmFuelStrategy
     readonly category = 'fuel_price' as const;
     readonly target = 'events';
     readonly schedule: string;
+    readonly stateFeed = true;
 
     constructor(url: string, schedule: string) {
         this.url = url;

@@ -10,6 +10,7 @@ export interface ScrapingStrategy<
     readonly category: ReportCategory | EventCategory;
     readonly target: 'reports' | 'events';
     readonly schedule: string;
+    readonly stateFeed?: boolean;
 
     fetch(): Promise<TRaw>;
     parse(raw: TRaw): Promise<TInsert[]>;

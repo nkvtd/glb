@@ -32,6 +32,7 @@ export class SensorCommunityStrategy
     readonly category = 'air_quality' as const;
     readonly target = 'reports';
     readonly schedule: string;
+    readonly stateFeed = true;
     private readonly resolver: MunicipalityResolver;
 
     constructor(url: string, schedule: string, resolver: MunicipalityResolver) {
