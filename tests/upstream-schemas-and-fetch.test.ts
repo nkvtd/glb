@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { amsmFuelResponseSchema } from '../src/core/validation/amsm-fuel.js';
+import { emscResponseSchema } from '../src/core/validation/emsc.js';
 import { evnResponseSchema } from '../src/core/validation/evn.js';
 import { meteoalarmResponseSchema } from '../src/core/validation/meteoalarm.js';
 import {
@@ -11,6 +12,7 @@ import { sensorCommunityResponseSchema } from '../src/core/validation/sensor-com
 import { vodovodSkopjeResponseSchema } from '../src/core/validation/vodovod-skopje.js';
 import type { MunicipalityResolver } from '../src/modules/scraping/resolver.js';
 import { AmsmFuelStrategy } from '../src/modules/scraping/strategies/amsm-fuel.strategy.js';
+import { EmscStrategy } from '../src/modules/scraping/strategies/emsc.strategy.js';
 import { EvnStrategy } from '../src/modules/scraping/strategies/evn.strategy.js';
 import { MeteoalarmStrategy } from '../src/modules/scraping/strategies/meteoalarm.strategy.js';
 import { MoeppStrategy } from '../src/modules/scraping/strategies/moepp.strategy.js';
@@ -125,6 +127,29 @@ const sensor = {
         { value_type: 'P2', value: 30 },
     ],
 };
+const emscFeature = {
+    type: 'Feature',
+    geometry: {
+        type: 'Point',
+        coordinates: [21.227, 41.435, -15],
+    },
+    id: '20261017_0000107',
+    properties: {
+        source_id: '2076106',
+        source_catalog: 'EMSC-RTS',
+        lastupdate: '2026-10-17T08:29:38.08296Z',
+        time: '2026-10-17T08:15:36.3Z',
+        flynn_region: 'REPUBLIC OF NORTH MACEDONIA',
+        lat: 41.435,
+        lon: 21.227,
+        depth: 15,
+        evtype: 'ke',
+        auth: 'IGEO',
+        mag: 2.5,
+        magtype: 'ml',
+        unid: '20261017_0000107',
+    },
+};
 
 function fakeResolver(): MunicipalityResolver {
     return {
@@ -213,6 +238,14 @@ describe('Upstream response schemas', () => {
         assert.equal(sensorResult.location.latitude, 42);
         assert.equal(at(sensorResult.sensordatavalues, 0).value, 60);
 
+        const emscResult = at(
+            emscResponseSchema.parse({ features: [emscFeature] }).features,
+            0,
+        );
+        assert.ok(emscResult.properties.time instanceof Date);
+        assert.equal(emscResult.properties.mag, 2.5);
+        assert.equal(emscResult.properties.lon, 21.227);
+
         assert.equal(
             evnResponseSchema.safeParse([{ prekinID: 'incomplete' }]).success,
             false,
@@ -298,6 +331,48 @@ describe('Strategy fetch adapters', () => {
                 },
             );
         }
+    });
+
+    it('adds a rolling start window to EMSC queries and treats 204 as empty', async () => {
+        const strategy = new EmscStrategy(
+            'https://emsc.test/query?limit=10&format=json',
+            '* * * * *',
+            fakeResolver(),
+        );
+        const urls: string[] = [];
+        await withFetch(
+            async (input) => {
+                urls.push(String(input));
+                return jsonResponse({ features: [emscFeature] });
+            },
+            async () => {
+                const result = await strategy.fetch();
+                assert.equal(result.length, 1);
+            },
+        );
+
+        const requested = new URL(present(at(urls, 0)));
+        const start = new Date(present(requested.searchParams.get('start')));
+        const windowMs = Date.now() - start.getTime();
+        assert.ok(windowMs >= 23.9 * 60 * 60 * 1000);
+        assert.ok(windowMs <= 24.1 * 60 * 60 * 1000);
+
+        await withFetch(
+            async () => new Response(null, { status: 204 }),
+            async () => {
+                assert.deepEqual(await strategy.fetch(), []);
+            },
+        );
+
+        await withFetch(
+            async () => new Response('emsc error', { status: 500 }),
+            async () => {
+                await assert.rejects(
+                    strategy.fetch(),
+                    /Fetch failed with status code 500: emsc error/,
+                );
+            },
+        );
     });
 
     it('fetches MOEPP stations then posts their IDs to retrieve measurements', async () => {

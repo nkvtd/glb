@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { emscResponseSchema } from '../src/core/validation/emsc.js';
 import { vodovodSkopjeResponseSchema } from '../src/core/validation/vodovod-skopje.js';
 import type { MunicipalityResolver } from '../src/modules/scraping/resolver.js';
 import { AmsmFuelStrategy } from '../src/modules/scraping/strategies/amsm-fuel.strategy.js';
+import { EmscStrategy } from '../src/modules/scraping/strategies/emsc.strategy.js';
 import { EvnStrategy } from '../src/modules/scraping/strategies/evn.strategy.js';
 import { MeteoalarmStrategy } from '../src/modules/scraping/strategies/meteoalarm.strategy.js';
 import { MoeppStrategy } from '../src/modules/scraping/strategies/moepp.strategy.js';
@@ -1150,6 +1152,145 @@ describe('Scraping Strategies', () => {
                 createFakeResolver({ resolveCoords: async () => null }),
             );
             assert.deepEqual(await unmapped.parse([makePacket(60)]), []);
+        });
+    });
+
+    describe('EmscStrategy', () => {
+        const strategy = new EmscStrategy(
+            'https://emsc.test/query?minmag=2.0',
+            '*/10 * * * *',
+            createFakeResolver(),
+        );
+
+        function makeEmscFeature(overrides: Record<string, unknown> = {}) {
+            return at(
+                emscResponseSchema.parse({
+                    features: [
+                        {
+                            id: '20261017_0000107',
+                            geometry: {
+                                type: 'Point',
+                                coordinates: [21.42, 42.0, -15],
+                            },
+                            properties: {
+                                source_id: '2076106',
+                                source_catalog: 'EMSC-RTS',
+                                lastupdate: '2026-10-17T08:29:38.08296Z',
+                                time: new Date(
+                                    Date.now() - 30 * 60_000,
+                                ).toISOString(),
+                                flynn_region: 'REPUBLIC OF NORTH MACEDONIA',
+                                lat: 42.0,
+                                lon: 21.42,
+                                depth: -15,
+                                evtype: 'ke',
+                                auth: 'IGEO',
+                                mag: 2.5,
+                                magtype: 'ml',
+                                unid: '20261017_0000107',
+                                ...overrides,
+                            },
+                        },
+                    ],
+                }).features,
+                0,
+            );
+        }
+
+        it('keeps domestic earthquakes and marks fresh ones ongoing', async () => {
+            const occurredAt = new Date(Date.now() - 30 * 60_000);
+            const [report] = await strategy.parse([
+                makeEmscFeature({ time: occurredAt.toISOString() }),
+            ]);
+            const parsed = present(report);
+            assert.equal(parsed.externalId, '20261017_0000107');
+            assert.equal(parsed.category, 'earthquake');
+            assert.equal(parsed.municipalityCode, 'MK0080907');
+            assert.equal(parsed.locationLabel, 'Карпош');
+            assert.equal(parsed.status, 'ongoing');
+            assert.equal(parsed.startsAt?.getTime(), occurredAt.getTime());
+            assert.equal(parsed.endsAt?.getTime(), occurredAt.getTime());
+            assert.equal(parsed.geom, 'SRID=4326;POINT(21.42 42)');
+            assert.equal(parsed.rawPayload.depthKm, 15);
+            assert.equal(parsed.rawPayload.magnitudeType, 'ML');
+            assert.match(present(parsed.title), /Слаб земјотрес: Карпош/);
+            assert.match(
+                present(parsed.description),
+                /слаб земјотрес со епицентар во подрачјето на Карпош, со јачина од 2\.5 степени \(ML\) и длабочина од 15 km/,
+            );
+        });
+
+        it('drops minor cross-border quakes and keeps felt ones without a municipality', async () => {
+            const minor = makeEmscFeature({
+                lon: 20.5,
+                lat: 40.8,
+                mag: 2.4,
+                flynn_region: 'GREECE',
+            });
+            assert.deepEqual(await strategy.parse([minor]), []);
+
+            const occurredAt = new Date(Date.now() - 2 * 60 * 60_000);
+            const felt = makeEmscFeature({
+                lon: 20.5,
+                lat: 40.8,
+                mag: 3.2,
+                flynn_region: 'GREECE',
+                time: occurredAt.toISOString(),
+            });
+            const [report] = await strategy.parse([felt]);
+            const parsed = present(report);
+            assert.equal(parsed.municipalityCode, null);
+            assert.equal(parsed.locationLabel, 'Грција (пограничен регион)');
+            assert.equal(parsed.status, 'ended');
+            assert.equal(parsed.startsAt?.getTime(), occurredAt.getTime());
+            assert.equal(parsed.geom, 'SRID=4326;POINT(20.5 40.8)');
+            assert.match(
+                present(parsed.description),
+                /умерен земјотрес со епицентар во пограничниот регион на Грција/,
+            );
+        });
+
+        it('formats magnitude adjectives and border regions', async () => {
+            const adjectives = [
+                [2.5, 'слаб'],
+                [3.5, 'умерен'],
+                [4.2, 'посилен'],
+                [5.2, 'силен'],
+            ] as const;
+            for (const [mag, adjective] of adjectives) {
+                const [report] = await strategy.parse([
+                    makeEmscFeature({
+                        mag,
+                        lon: mag < 3.0 ? 21.42 : 20.5,
+                        lat: mag < 3.0 ? 42.0 : 40.8,
+                        flynn_region: 'ALBANIA',
+                    }),
+                ]);
+                assert.match(
+                    present(present(report).description),
+                    new RegExp(`${adjective} земјотрес`),
+                );
+            }
+
+            const regions = [
+                ['ALBANIA', 'Албанија (пограничен регион)'],
+                ['GREECE', 'Грција (пограничен регион)'],
+                ['BULGARIA', 'Бугарија (пограничен регион)'],
+                ['SERBIA', 'Србија (пограничен регион)'],
+                ['KOSOVO', 'Косово (пограничен регион)'],
+                ['ITALY', 'Граничен регион'],
+            ] as const;
+            for (const [flynnRegion, label] of regions) {
+                const [report] = await strategy.parse([
+                    makeEmscFeature({
+                        mag: 3.5,
+                        lon: 20.5,
+                        lat: 40.8,
+                        flynn_region: flynnRegion,
+                    }),
+                ]);
+                assert.equal(present(report).locationLabel, label);
+            }
         });
     });
 

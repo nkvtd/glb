@@ -269,6 +269,7 @@ describe('Alerting', () => {
                 'weather',
                 'wildfire',
                 'air_quality',
+                'earthquake',
             ];
             const statuses = ['ongoing', 'scheduled', 'ended', 'unknown'];
             const expectedEmoji = [
@@ -280,6 +281,7 @@ describe('Alerting', () => {
                 '🌩️',
                 '🔥',
                 '💨',
+                '🌍',
             ];
             const expectedColor = [0xe74c3c, 0xf39c12, 0x2ecc71, 0x95a5a6];
             const items = categories.map((category, index) =>

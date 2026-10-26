@@ -5,6 +5,7 @@ export const reportCategories = [
     'weather',
     'wildfire',
     'air_quality',
+    'earthquake',
 ] as const;
 
 export type ReportCategory = (typeof reportCategories)[number];

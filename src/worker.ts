@@ -4,6 +4,7 @@ import { logger } from './infrastructure/logging/logger.js';
 import { ScrapingOrchestrator } from './modules/scraping/orchestrator.js';
 import { MunicipalityResolver } from './modules/scraping/resolver.js';
 import { AmsmFuelStrategy } from './modules/scraping/strategies/amsm-fuel.strategy.js';
+import { EmscStrategy } from './modules/scraping/strategies/emsc.strategy.js';
 import { EvnStrategy } from './modules/scraping/strategies/evn.strategy.js';
 import { MeteoalarmStrategy } from './modules/scraping/strategies/meteoalarm.strategy.js';
 import { MoeppStrategy } from './modules/scraping/strategies/moepp.strategy.js';
@@ -47,6 +48,11 @@ async function main() {
         new SensorCommunityStrategy(
             'https://data.sensor.community/airrohr/v1/filter/country=MK',
             '*/15 * * * *',
+            resolver,
+        ),
+        new EmscStrategy(
+            'https://www.seismicportal.eu/fdsnws/event/1/query?limit=1000&minlat=40.8&maxlat=42.4&minlon=20.4&maxlon=23.0&format=json&minmag=2.0',
+            '*/10 * * * *',
             resolver,
         ),
     ];
