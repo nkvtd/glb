@@ -20,7 +20,7 @@
   "dependencies": {
     "@hono/node-server": "^2.1.5",
     "@hono/zod-validator": "^0.9.0",
-    "croner": "^10.0.1",
+    "croner": "^11.0.0",
     "dotenv": "^18.0.9",
     "drizzle-kit": "^0.31.11",
     "drizzle-orm": "^0.45.4",
