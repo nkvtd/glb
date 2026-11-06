@@ -13,6 +13,7 @@
 
   <p align="center">
     <a href="https://glb.nkvtd.com/api/reports"><strong>Live API</strong></a> •
+    <a href="https://glb.nkvtd.com"><strong>Live Dashboard</strong></a> •
     <a href="#overview">Overview</a> •
     <a href="#key-features">Features</a> •
     <a href="#tech-stack">Tech Stack</a> •
@@ -75,6 +76,8 @@ It operates as two strictly separated processes sharing a single PostgreSQL + Po
 1. **A Write-Only Background Worker (`src/worker.ts`)** that runs scheduled scraping strategies, normalizes raw upstream payloads into clean Macedonian prose, resolves locations against official municipal boundaries, reconciles event lifecycles, and dispatches real-time alerts to Discord.
 2. **A Read-Only HTTP Server (`src/server.ts`)** powered by **Hono** that serves validated, cursor-paginated, and spatially indexed data at **[https://glb.nkvtd.com/api](https://glb.nkvtd.com/api/reports)**.
 
+> **Companion Web Dashboard (`glb::watch`):** An interactive, real-time map, local GPS radar, and searchable incident registry powered by this API is live at **[https://glb.nkvtd.com](https://glb.nkvtd.com)**
+
 ---
 
 ## Key Features
@@ -135,7 +138,8 @@ It operates as two strictly separated processes sharing a single PostgreSQL + Po
 │  Hono REST API Server (src/server.ts)                                	  	│
 │  • Rate Limiting, CORS, Secure Headers & Request ID Correlation      	  	│
 │  • Endpoints: /api/reports, /api/events, /api/municipalities         	    │
-│  • Live Instance: [https://glb.nkvtd.com/api](https://glb.nkvtd.com/api)	│
+│  • Live API: [https://glb.nkvtd.com/api](https://glb.nkvtd.com/api)     	│
+│  • Live Dashboard (glb::watch): https://glb.nkvtd.com                     │
 └───────────────────────────────────────────────────────────────────────────┘
 ```
 
