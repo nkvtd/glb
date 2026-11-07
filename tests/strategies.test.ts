@@ -10,6 +10,7 @@ import { MeteoalarmStrategy } from '../src/modules/scraping/strategies/meteoalar
 import { MoeppStrategy } from '../src/modules/scraping/strategies/moepp.strategy.js';
 import { SensorCommunityStrategy } from '../src/modules/scraping/strategies/sensor-community.strategy.js';
 import { VodovodKumanovoStrategy } from '../src/modules/scraping/strategies/vodovod-kumanovo.strategy.js';
+import { VodovodPrilepStrategy } from '../src/modules/scraping/strategies/vodovod-prilep.strategy.js';
 import { VodovodSkopjeStrategy } from '../src/modules/scraping/strategies/vodovod-skopje.strategy.js';
 import { at, present } from './test-utils.js';
 
@@ -1543,6 +1544,190 @@ describe('Scraping Strategies', () => {
             assert.equal(
                 withCitySuffix.locationLabel,
                 'ул. Народна Револуција, Куманово',
+            );
+        });
+    });
+
+    describe('VodovodPrilepStrategy', () => {
+        const strategy = new VodovodPrilepStrategy(
+            'https://vodovod-prilep.test/wp-json/wp/v2/posts',
+            '*/30 * * * *',
+        );
+
+        const formatSkopjeDate = (date: Date) =>
+            new Intl.DateTimeFormat('en-CA', {
+                timeZone: 'Europe/Skopje',
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+            }).format(date);
+
+        it('stores normal daily supply as omitted, parses street outage time windows, and alerts abnormal supply', async () => {
+            const todaySkopje = formatSkopjeDate(new Date());
+            const raw = [
+                {
+                    id: 7357,
+                    date: `${todaySkopje}T08:49:45`,
+                    link: 'https://vodovod-prilep.mk/post-7357/',
+                    title: {
+                        rendered: 'ВОДОСНАБДУВАЊЕТО НА ОПШТИНА ПРИЛЕП',
+                    },
+                    excerpt: {
+                        rendered:
+                            '<p>Водоснабдувањето на ден <strong>05.11.2026</strong> [&hellip;]</p>',
+                    },
+                    content: {
+                        rendered: [
+                            '<p>Водоснабдувањето на ден <strong>05.11.2026</strong> (четврток) ќе биде нормално со здравствено исправна вода за пиење.<br>Вкупната произведена количина на вода <strong>234л/с</strong>, од кои <strong>206л/с</strong> од Студенчица,0л/с од бунари и <strong>28л/с</strong> од сопствени извори.</p>',
+                            '<h2 class="wp-block-heading">Прекин во водоснабдувањето заради санација на дефекти и приклучоци во периодот од 08 до 14 часот ќе има на следните улици и делови од Општина Прилеп:</h2>',
+                            '<h2 class="wp-block-heading">– ул. Лазо Филипоски</h2>',
+                            '<h2 class="wp-block-heading">– ул. Лазо Филипоски.</h2>',
+                            '<h2 class="wp-block-heading">– н.м. Мажучиште</h2>',
+                        ].join('\n'),
+                    },
+                },
+                {
+                    id: 3508,
+                    date: `${todaySkopje}T07:38:44`,
+                    link: 'https://vodovod-prilep.mk/post-3508/',
+                    title: {
+                        rendered: 'ВОДОСНАБДУВАЊЕТО НА ОПШТИНА ПРИЛЕП',
+                    },
+                    content: {
+                        rendered:
+                            '<p>Водоснабдувањето на ден 23.11.2021 ќе биде нормално со здравствено исправна вода за пиење.<br>Вкупната произведена количина на вода е 247л/с, од кои 217л/с од Студенчица, 0л/с од бунари и 30л/с сопствени извори. Водоснабдувањето ќе биде нарушено во високата зона на град Прилеп.<br><br>Прекин во водоснабдувањето заради санација на дефекти во периодот од 08:30 до 15:30 часот ќе има на следните улици и делови од Општина Прилеп:<br>– Марксова</p>',
+                    },
+                },
+            ];
+
+            const parsed = await strategy.parse(raw);
+            assert.equal(parsed.length, 5);
+
+            const normalSupply = at(parsed, 0);
+            assert.equal(normalSupply.source, 'vodovod-prilep');
+            assert.equal(normalSupply.category, 'water');
+            assert.equal(normalSupply.municipalityCode, 'MK0050800');
+            assert.equal(normalSupply.locationLabel, 'Прилеп');
+            assert.equal(normalSupply.title, 'Водоснабдување: Прилеп');
+            assert.equal(normalSupply.status, 'omitted');
+            assert.deepEqual(normalSupply.rawPayload.supply, {
+                totalLs: 234,
+                studenchicaLs: 206,
+                wellsLs: 0,
+                springsLs: 28,
+            });
+            assert.match(
+                present(normalSupply.description),
+                /Студенчица, 0л\/с од бунари и 28л\/с од сопствени извори\.$/,
+            );
+
+            const firstStreet = at(parsed, 1);
+            assert.equal(
+                firstStreet.title,
+                'Прекин во водоснабдувањето: ул. Лазо Филипоски',
+            );
+            assert.equal(
+                firstStreet.locationLabel,
+                'ул. Лазо Филипоски, Прилеп',
+            );
+            assert.equal(
+                firstStreet.description,
+                'Прекин во водоснабдувањето заради санација на дефекти и приклучоци во периодот од 08:00 до 14:00 часот на ул. Лазо Филипоски.',
+            );
+            assert.equal(firstStreet.rawPayload.recordType, 'outage');
+            assert.equal(
+                present(firstStreet.endsAt).getTime() -
+                    present(firstStreet.startsAt).getTime(),
+                6 * 3600_000,
+            );
+
+            const disruptedSupply = at(parsed, 3);
+            assert.equal(
+                disruptedSupply.title,
+                'Нарушено водоснабдување: Прилеп',
+            );
+            assert.equal(disruptedSupply.status, 'ongoing');
+
+            const customWindowStreet = at(parsed, 4);
+            assert.match(
+                present(customWindowStreet.description),
+                /во периодот од 08:30 до 15:30 часот на Марксова\.$/,
+            );
+            assert.equal(
+                present(customWindowStreet.endsAt).getTime() -
+                    present(customWindowStreet.startsAt).getTime(),
+                7 * 3600_000,
+            );
+        });
+
+        it('parses standalone emergency notices, ignores HR/PR posts, and marks historical outages ended', async () => {
+            const todaySkopje = formatSkopjeDate(new Date());
+            const raw = [
+                {
+                    id: 7126,
+                    date: `${todaySkopje}T12:40:15`,
+                    link: 'https://vodovod-prilep.mk/post-7126/',
+                    title: {
+                        rendered: 'Известување за жителите на н.м. Ореовец',
+                    },
+                    content: {
+                        rendered:
+                            '<p>Им соопштуваме на корисниците на вода за пиење од н.м. Оревоец да не ја користат истата, поради проблеми со дистрибуцијата на електрична енергија во системот за хлорирање.</p>',
+                    },
+                },
+                {
+                    id: 6846,
+                    date: `${todaySkopje}T10:02:38`,
+                    link: 'https://vodovod-prilep.mk/post-6846/',
+                    title: {
+                        rendered:
+                            'ЈАВЕН ПОВИК ЗА ПРИЈАВУВАЊЕ ЧЛЕН ВО НАДЗОРЕН ОДБОР',
+                    },
+                    content: {
+                        rendered:
+                            '<p>Советот на Општина Прилеп објавува јавен повик за член во Надзорен Одбор.</p>',
+                    },
+                },
+                {
+                    id: 7337,
+                    date: '2026-10-22T07:26:31',
+                    link: 'https://vodovod-prilep.mk/post-7337/',
+                    title: { rendered: '' },
+                    excerpt: {
+                        rendered:
+                            '<p>Водоснабдувањето на ден 22.10.2026 ќе биде нормално со здравствено исправна вода за пиење.</p>',
+                    },
+                    content: {
+                        rendered: '',
+                    },
+                },
+                {
+                    id: 7000,
+                    date: 'invalid-date',
+                    link: 'https://vodovod-prilep.mk/post-7000/',
+                    title: { rendered: 'Invalid' },
+                    content: { rendered: '<p>Тест</p>' },
+                },
+            ];
+
+            const parsed = await strategy.parse(raw);
+            assert.equal(parsed.length, 2);
+
+            const notice = at(parsed, 0);
+            assert.equal(notice.status, 'ongoing');
+            assert.equal(notice.title, 'Вонредно известување: н.м. Ореовец');
+            assert.equal(notice.locationLabel, 'н.м. Ореовец, Прилеп');
+            assert.equal(notice.rawPayload.recordType, 'notice');
+
+            const pastSupply = at(parsed, 1);
+            assert.equal(pastSupply.status, 'ended');
+            assert.equal(
+                pastSupply.startsAt?.toISOString(),
+                '2026-10-21T22:00:00.000Z',
+            );
+            assert.equal(
+                pastSupply.endsAt?.toISOString(),
+                '2026-10-22T21:59:59.999Z',
             );
         });
     });

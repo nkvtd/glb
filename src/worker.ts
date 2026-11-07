@@ -10,6 +10,7 @@ import { MeteoalarmStrategy } from './modules/scraping/strategies/meteoalarm.str
 import { MoeppStrategy } from './modules/scraping/strategies/moepp.strategy.js';
 import { SensorCommunityStrategy } from './modules/scraping/strategies/sensor-community.strategy.js';
 import { VodovodKumanovoStrategy } from './modules/scraping/strategies/vodovod-kumanovo.strategy.js';
+import { VodovodPrilepStrategy } from './modules/scraping/strategies/vodovod-prilep.strategy.js';
 import { VodovodSkopjeStrategy } from './modules/scraping/strategies/vodovod-skopje.strategy.js';
 
 async function main() {
@@ -58,6 +59,10 @@ async function main() {
         ),
         new VodovodKumanovoStrategy(
             'https://vodovod-kumanovo.com.mk/wp-json/wp/v2/posts?categories=3&per_page=14&_fields=id,date,link,title,content',
+            '*/30 * * * *',
+        ),
+        new VodovodPrilepStrategy(
+            'https://vodovod-prilep.mk/wp-json/wp/v2/posts?per_page=14&_fields=id,date,link,title,excerpt,content',
             '*/30 * * * *',
         ),
     ];

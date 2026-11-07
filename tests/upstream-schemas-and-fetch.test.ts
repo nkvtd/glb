@@ -10,6 +10,7 @@ import {
 } from '../src/core/validation/moepp.js';
 import { sensorCommunityResponseSchema } from '../src/core/validation/sensor-community.js';
 import { vodovodKumanovoResponseSchema } from '../src/core/validation/vodovod-kumanovo.js';
+import { vodovodPrilepResponseSchema } from '../src/core/validation/vodovod-prilep.js';
 import { vodovodSkopjeResponseSchema } from '../src/core/validation/vodovod-skopje.js';
 import type { MunicipalityResolver } from '../src/modules/scraping/resolver.js';
 import { AmsmFuelStrategy } from '../src/modules/scraping/strategies/amsm-fuel.strategy.js';
@@ -19,6 +20,7 @@ import { MeteoalarmStrategy } from '../src/modules/scraping/strategies/meteoalar
 import { MoeppStrategy } from '../src/modules/scraping/strategies/moepp.strategy.js';
 import { SensorCommunityStrategy } from '../src/modules/scraping/strategies/sensor-community.strategy.js';
 import { VodovodKumanovoStrategy } from '../src/modules/scraping/strategies/vodovod-kumanovo.strategy.js';
+import { VodovodPrilepStrategy } from '../src/modules/scraping/strategies/vodovod-prilep.strategy.js';
 import { VodovodSkopjeStrategy } from '../src/modules/scraping/strategies/vodovod-skopje.strategy.js';
 import { at, present } from './test-utils.js';
 
@@ -165,6 +167,21 @@ const kumanovoPost = {
             '<ul><li>ул. 114 бр. 6, нас. Карпош &#8211; дефект на водоводна мрежа.</li></ul>',
     },
 };
+const prilepPost = {
+    id: 7357,
+    date: '2026-11-05T08:49:45',
+    link: 'https://vodovod-prilep.mk/post-7357/',
+    title: {
+        rendered: 'ВОДОСНАБДУВАЊЕТО НА ОПШТИНА ПРИЛЕП',
+    },
+    excerpt: {
+        rendered: '<p>Водоснабдувањето на ден 05.11.2026 [&hellip;]</p>',
+    },
+    content: {
+        rendered:
+            '<p>Водоснабдувањето на ден 05.11.2026 ќе биде нормално.</p><h2>Прекин во водоснабдувањето заради санација на дефекти и приклучоци во периодот од 08 до 14 часот ќе има на следните улици и делови од Општина Прилеп:</h2><h2>– ул. Лазо Филипоски</h2>',
+    },
+};
 
 function fakeResolver(): MunicipalityResolver {
     return {
@@ -267,6 +284,12 @@ describe('Upstream response schemas', () => {
         );
         assert.equal(kumanovoResult.id, 8015);
 
+        const prilepResult = at(
+            vodovodPrilepResponseSchema.parse([prilepPost]),
+            0,
+        );
+        assert.equal(prilepResult.id, 7357);
+
         assert.equal(
             evnResponseSchema.safeParse([{ prekinID: 'incomplete' }]).success,
             false,
@@ -346,6 +369,13 @@ describe('Strategy fetch adapters', () => {
                     '* * * * *',
                 ),
                 [kumanovoPost],
+            ],
+            [
+                new VodovodPrilepStrategy(
+                    'https://vodovod-prilep.test',
+                    '* * * * *',
+                ),
+                [prilepPost],
             ],
             [new AmsmFuelStrategy('https://amsm.test', '* * * * *'), [fuel]],
         ] as const;
@@ -480,6 +510,10 @@ describe('Strategy fetch adapters', () => {
             ),
             new VodovodKumanovoStrategy(
                 'https://vodovod-kumanovo.test',
+                '* * * * *',
+            ),
+            new VodovodPrilepStrategy(
+                'https://vodovod-prilep.test',
                 '* * * * *',
             ),
             new AmsmFuelStrategy('https://amsm.test', '* * * * *'),
