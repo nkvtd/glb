@@ -9,6 +9,7 @@ import { EvnStrategy } from './modules/scraping/strategies/evn.strategy.js';
 import { MeteoalarmStrategy } from './modules/scraping/strategies/meteoalarm.strategy.js';
 import { MoeppStrategy } from './modules/scraping/strategies/moepp.strategy.js';
 import { SensorCommunityStrategy } from './modules/scraping/strategies/sensor-community.strategy.js';
+import { VodovodKumanovoStrategy } from './modules/scraping/strategies/vodovod-kumanovo.strategy.js';
 import { VodovodSkopjeStrategy } from './modules/scraping/strategies/vodovod-skopje.strategy.js';
 
 async function main() {
@@ -54,6 +55,10 @@ async function main() {
             'https://www.seismicportal.eu/fdsnws/event/1/query?limit=1000&minlat=40.8&maxlat=42.4&minlon=20.4&maxlon=23.0&format=json&minmag=2.0',
             '*/10 * * * *',
             resolver,
+        ),
+        new VodovodKumanovoStrategy(
+            'https://vodovod-kumanovo.com.mk/wp-json/wp/v2/posts?categories=3&per_page=14&_fields=id,date,link,title,content',
+            '*/30 * * * *',
         ),
     ];
 

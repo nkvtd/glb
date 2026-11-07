@@ -114,7 +114,7 @@ It operates as two strictly separated processes sharing a single PostgreSQL + Po
 │                      Upstream Civic Data Sources                          │
 │        EVN (Power)   •   Vodovod Skopje (Water)   •   MOEPP (Air)         │
 │        AMSM (Fuel)   •   Meteoalarm (Weather)     •   Sensor.Community    │
-│        EMSC (Quakes)                                                      │
+│        EMSC (Quakes) •   Vodovod Kumanovo (Water)                         │
 └───────────────────────────────────────────────────────────────────────────┘
                                    │  Scheduled Cron Jobs (*/30 * * * *)
                                    ▼
@@ -158,6 +158,7 @@ The worker currently runs several active scraping strategies on their respective
 | `meteoalarm` | `weather` | `reports` | `*/15 * * * *` | **Meteoalarm (EUMETNET / UHMR)** | Scrapes official CAP weather warnings. Sanitizes text encodings, maps awareness types and severity levels into Macedonian prose, and fans out regional alerts (`NUTS3`) across all member municipalities via `resolveRegion()`. |
 | `sensor-community` | `air_quality` | `reports` | `*/15 * * * *` | **Sensor.Community (airRohr)** | Aggregates private air quality and weather sensors (`PM10`, `PM2.5`, temperature, humidity, pressure) per municipality. Applies a 4-stage sanitization pipeline (filtering indoor nodes, dead fans, and fog condensation spikes) and computes a 20% trimmed mean. |
 | `emsc-csem` | `earthquake` | `reports` | `*/10 * * * *` | **EMSC-CSEM (FDSNWS)** | Queries recent earthquakes in a bounding box around Macedonia and resolves epicentres via PostGIS `ST_Covers`. Domestic quakes are kept at `M ≥ 2.0`; cross-border quakes only at `M ≥ 3.0`, stored without a municipality but with a spatial point so radius queries include felt border events. Quakes up to one hour old insert as `ongoing` for alerting and auto-end on the next reconciler tick. |
+| `vodovod-kumanovo` | `water` | `reports` | `*/30 * * * *` | **JP Vodovod – Kumanovo** | Scrapes daily water network defect and intervention lists via the WordPress REST API. Extracts individual street/settlement items, hashes post ID and normalized item text into a deterministic 32-character SHA-256 `externalId`, and maps `Europe/Skopje` daily bounds into `reports`. |
 
 > **Supported Schema Categories & Statuses:**
 > - **Localized Reports (`reports`):** `power`, `water`, `road`, `weather`, `wildfire`, `air_quality`, `earthquake`

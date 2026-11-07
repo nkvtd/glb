@@ -9,6 +9,7 @@ import {
     moeppStationsResponseSchema,
 } from '../src/core/validation/moepp.js';
 import { sensorCommunityResponseSchema } from '../src/core/validation/sensor-community.js';
+import { vodovodKumanovoResponseSchema } from '../src/core/validation/vodovod-kumanovo.js';
 import { vodovodSkopjeResponseSchema } from '../src/core/validation/vodovod-skopje.js';
 import type { MunicipalityResolver } from '../src/modules/scraping/resolver.js';
 import { AmsmFuelStrategy } from '../src/modules/scraping/strategies/amsm-fuel.strategy.js';
@@ -17,6 +18,7 @@ import { EvnStrategy } from '../src/modules/scraping/strategies/evn.strategy.js'
 import { MeteoalarmStrategy } from '../src/modules/scraping/strategies/meteoalarm.strategy.js';
 import { MoeppStrategy } from '../src/modules/scraping/strategies/moepp.strategy.js';
 import { SensorCommunityStrategy } from '../src/modules/scraping/strategies/sensor-community.strategy.js';
+import { VodovodKumanovoStrategy } from '../src/modules/scraping/strategies/vodovod-kumanovo.strategy.js';
 import { VodovodSkopjeStrategy } from '../src/modules/scraping/strategies/vodovod-skopje.strategy.js';
 import { at, present } from './test-utils.js';
 
@@ -150,6 +152,19 @@ const emscFeature = {
         unid: '20261017_0000107',
     },
 };
+const kumanovoPost = {
+    id: 8015,
+    date: '2026-10-22T07:54:14',
+    link: 'https://vodovod-kumanovo.com.mk/post-8015/',
+    title: {
+        rendered:
+            'Дефекти и интервенции на водоводна мрежа на ден 22.10.2026год.',
+    },
+    content: {
+        rendered:
+            '<ul><li>ул. 114 бр. 6, нас. Карпош &#8211; дефект на водоводна мрежа.</li></ul>',
+    },
+};
 
 function fakeResolver(): MunicipalityResolver {
     return {
@@ -246,6 +261,12 @@ describe('Upstream response schemas', () => {
         assert.equal(emscResult.properties.mag, 2.5);
         assert.equal(emscResult.properties.lon, 21.227);
 
+        const kumanovoResult = at(
+            vodovodKumanovoResponseSchema.parse([kumanovoPost]),
+            0,
+        );
+        assert.equal(kumanovoResult.id, 8015);
+
         assert.equal(
             evnResponseSchema.safeParse([{ prekinID: 'incomplete' }]).success,
             false,
@@ -318,6 +339,13 @@ describe('Strategy fetch adapters', () => {
                     fakeResolver(),
                 ),
                 [sensor],
+            ],
+            [
+                new VodovodKumanovoStrategy(
+                    'https://vodovod-kumanovo.test',
+                    '* * * * *',
+                ),
+                [kumanovoPost],
             ],
             [new AmsmFuelStrategy('https://amsm.test', '* * * * *'), [fuel]],
         ] as const;
@@ -449,6 +477,10 @@ describe('Strategy fetch adapters', () => {
                 'https://sensor.test',
                 '* * * * *',
                 fakeResolver(),
+            ),
+            new VodovodKumanovoStrategy(
+                'https://vodovod-kumanovo.test',
+                '* * * * *',
             ),
             new AmsmFuelStrategy('https://amsm.test', '* * * * *'),
         ];

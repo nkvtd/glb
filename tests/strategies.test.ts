@@ -9,6 +9,7 @@ import { EvnStrategy } from '../src/modules/scraping/strategies/evn.strategy.js'
 import { MeteoalarmStrategy } from '../src/modules/scraping/strategies/meteoalarm.strategy.js';
 import { MoeppStrategy } from '../src/modules/scraping/strategies/moepp.strategy.js';
 import { SensorCommunityStrategy } from '../src/modules/scraping/strategies/sensor-community.strategy.js';
+import { VodovodKumanovoStrategy } from '../src/modules/scraping/strategies/vodovod-kumanovo.strategy.js';
 import { VodovodSkopjeStrategy } from '../src/modules/scraping/strategies/vodovod-skopje.strategy.js';
 import { at, present } from './test-utils.js';
 
@@ -1363,6 +1364,186 @@ describe('Scraping Strategies', () => {
             assert.ok(fallbackEvent.startsAt instanceof Date);
             assert.ok(fallbackEvent.startsAt.getTime() >= beforeFallback);
             assert.match(present(fallbackEvent.description), /во Македонија/);
+        });
+    });
+
+    describe('VodovodKumanovoStrategy', () => {
+        const strategy = new VodovodKumanovoStrategy(
+            'https://vodovod-kumanovo.test/wp-json/wp/v2/posts',
+            '*/30 * * * *',
+        );
+
+        const formatSkopjeDate = (date: Date) =>
+            new Intl.DateTimeFormat('en-CA', {
+                timeZone: 'Europe/Skopje',
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+            }).format(date);
+
+        it('parses daily <li> defect and intervention items, deduplicates within post, and resolves Kumanovo', async () => {
+            const todaySkopje = formatSkopjeDate(new Date());
+            const raw = [
+                {
+                    id: 8015,
+                    date: `${todaySkopje}T07:54:14`,
+                    link: 'https://vodovod-kumanovo.com.mk/post-8015/',
+                    title: {
+                        rendered:
+                            'Дефекти и интервенции на водоводна мрежа на ден 22.10.2026год.',
+                    },
+                    content: {
+                        rendered: [
+                            '<ul>',
+                            '<li>ул. 114 бр. 6, нас. Карпош &#8211; дефект на водоводна мрежа.</li>',
+                            '<li>ул. 114 бр. 6, нас. Карпош – дефект на водоводна мрежа</li>',
+                            '<li>Б.С. Лук-оил (Романовски пат &#8211; муслимански гробишта ) &#8211; замена на овален затворач во водомерна шахта.</li>',
+                            '<li>ул. Козјачка, нас. Вера Которка ( индустриска зона) -времено стопирање на приклучок поради изведба на ископ.</li>',
+                            '</ul>',
+                        ].join('\n'),
+                    },
+                },
+                {
+                    id: 8010,
+                    date: '2026-10-19T07:58:11',
+                    link: 'https://vodovod-kumanovo.com.mk/post-8010/',
+                    title: {
+                        rendered:
+                            'Дефекти и интервенции на водоводна мрежа на ден 19.10.2026год.',
+                    },
+                    content: {
+                        rendered:
+                            '<ul><li>ул. Среќко Пужаљка &#8211; дефект на водоводна мрежа.</li></ul>',
+                    },
+                },
+            ];
+
+            const parsed = await strategy.parse(raw);
+            assert.equal(parsed.length, 4);
+
+            const first = at(parsed, 0);
+            assert.equal(first.externalId.length, 32);
+            assert.equal(first.source, 'vodovod-kumanovo');
+            assert.equal(first.category, 'water');
+            assert.equal(first.municipalityCode, 'MK0070300');
+            assert.equal(
+                first.locationLabel,
+                'ул. 114 бр. 6, нас. Карпош, Куманово',
+            );
+            assert.equal(first.title, 'Дефект: ул. 114 бр. 6, нас. Карпош');
+            assert.equal(
+                first.description,
+                'ул. 114 бр. 6, нас. Карпош – дефект на водоводна мрежа.',
+            );
+            assert.equal(first.status, 'ongoing');
+            assert.equal(first.rawPayload.postId, 8015);
+            assert.equal(first.rawPayload.items.length, 3);
+
+            const second = at(parsed, 1);
+            assert.equal(
+                second.title,
+                'Интервенција: Б.С. Лук-оил (Романовски пат – муслимански гробишта)',
+            );
+            assert.equal(
+                second.locationLabel,
+                'Б.С. Лук-оил (Романовски пат – муслимански гробишта), Куманово',
+            );
+
+            const third = at(parsed, 2);
+            assert.equal(
+                third.title,
+                'Интервенција: ул. Козјачка, нас. Вера Которка (индустриска зона)',
+            );
+            assert.equal(
+                third.description,
+                'ул. Козјачка, нас. Вера Которка (индустриска зона) – времено стопирање на приклучок поради изведба на ископ.',
+            );
+
+            const historical = at(parsed, 3);
+            assert.equal(historical.status, 'ended');
+            assert.equal(
+                historical.startsAt?.toISOString(),
+                '2026-10-18T22:00:00.000Z',
+            );
+            assert.equal(
+                historical.endsAt?.toISOString(),
+                '2026-10-19T21:59:59.999Z',
+            );
+        });
+
+        it('handles <p> fallback, inline/city-wide locations, scheduled dates, and invalid posts', async () => {
+            const tomorrowSkopje = formatSkopjeDate(
+                new Date(Date.now() + 2 * 24 * 3600_000),
+            );
+            const raw = [
+                {
+                    id: 7907,
+                    date: `${tomorrowSkopje}T07:42:42`,
+                    link: 'https://vodovod-kumanovo.com.mk/post-7907/',
+                    title: { rendered: 'Најава' },
+                    content: {
+                        rendered: [
+                            '<p>&#8211; Испитување на водоводна мрежа на ул. Мавровска бр. 1 по пријава за намален притисок.</p>',
+                            '<p>чистење на градски украсни фонтани</p>',
+                            '<p>бул. 3 МУБ</p>',
+                            '<p>ул. Народна Револуција, Куманово &#8211; дефект на водоводна мрежа.</p>',
+                            '<p>&nbsp;</p>',
+                        ].join('\n'),
+                    },
+                },
+                {
+                    id: 7908,
+                    date: 'invalid-date',
+                    link: 'https://vodovod-kumanovo.com.mk/post-7908/',
+                    title: { rendered: 'Невалиден датум' },
+                    content: {
+                        rendered: '<ul><li>ул. Тест – дефект.</li></ul>',
+                    },
+                },
+                {
+                    id: 7909,
+                    date: '2026-11-06T09:00:00',
+                    link: 'https://vodovod-kumanovo.com.mk/post-7909/',
+                    title: { rendered: 'Празно' },
+                    content: {
+                        rendered: '<p>&nbsp;</p>',
+                    },
+                },
+            ];
+
+            const parsed = await strategy.parse(raw);
+            assert.equal(parsed.length, 4);
+
+            const inlineLoc = at(parsed, 0);
+            assert.equal(inlineLoc.status, 'scheduled');
+            assert.equal(inlineLoc.title, 'Дефект: ул. Мавровска бр. 1');
+            assert.equal(
+                inlineLoc.locationLabel,
+                'ул. Мавровска бр. 1, Куманово',
+            );
+            assert.equal(
+                inlineLoc.description,
+                'Испитување на водоводна мрежа на ул. Мавровска бр. 1 по пријава за намален притисок.',
+            );
+
+            const cityWide = at(parsed, 1);
+            assert.equal(cityWide.title, 'Интервенција: Куманово');
+            assert.equal(cityWide.locationLabel, 'Куманово');
+            assert.equal(
+                cityWide.description,
+                'Чистење на градски украсни фонтани.',
+            );
+
+            const streetOnly = at(parsed, 2);
+            assert.equal(streetOnly.title, 'Дефект: бул. 3 МУБ');
+            assert.equal(streetOnly.locationLabel, 'бул. 3 МУБ, Куманово');
+            assert.equal(streetOnly.description, 'Бул. 3 МУБ.');
+
+            const withCitySuffix = at(parsed, 3);
+            assert.equal(
+                withCitySuffix.locationLabel,
+                'ул. Народна Револуција, Куманово',
+            );
         });
     });
 });
