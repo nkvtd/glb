@@ -236,14 +236,14 @@ export class MeteoalarmStrategy
             : undefined;
 
         const baseSentence = levelMeta
-            ? `Издадено е ${levelMeta.colorAdjective} метео предупредување за ${params.eventInstrumental} во ${params.locationLabel} (${levelMeta.severityDesc}).`
+            ? `Издадено е ${levelMeta.colorAdjective} метео предупредување за ${params.eventInstrumental} во ${params.locationLabel}. Се препорачува внимателност поради појава на ${levelMeta.severityDesc}).`
             : `Издадено е метео предупредување за ${params.eventInstrumental} во ${params.locationLabel}.`;
 
         if (params.validMkText) {
             return `${baseSentence} ${params.validMkText}`;
         }
 
-        return `${baseSentence} Се препорачува внимателност и следење на состојбата од страна на УХМР.`;
+        return baseSentence;
     }
 
     private parseAwarenessLevel(info: MeteoalarmInfo): {
