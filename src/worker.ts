@@ -8,6 +8,7 @@ import { EmscStrategy } from './modules/scraping/strategies/emsc.strategy.js';
 import { EvnStrategy } from './modules/scraping/strategies/evn.strategy.js';
 import { MeteoalarmStrategy } from './modules/scraping/strategies/meteoalarm.strategy.js';
 import { MoeppStrategy } from './modules/scraping/strategies/moepp.strategy.js';
+import { NbrmRatesStrategy } from './modules/scraping/strategies/nbrm-rates.strategy.js';
 import { SensorCommunityStrategy } from './modules/scraping/strategies/sensor-community.strategy.js';
 import { VodovodKumanovoStrategy } from './modules/scraping/strategies/vodovod-kumanovo.strategy.js';
 import { VodovodPrilepStrategy } from './modules/scraping/strategies/vodovod-prilep.strategy.js';
@@ -64,6 +65,10 @@ async function main() {
         new VodovodPrilepStrategy(
             'https://vodovod-prilep.mk/wp-json/wp/v2/posts?per_page=14&_fields=id,date,link,title,excerpt,content',
             '*/30 * * * *',
+        ),
+        new NbrmRatesStrategy(
+            'https://www.nbrm.mk/KLServiceNOV/GetExchangeRate',
+            '5 0 * * *',
         ),
     ];
 
