@@ -61,14 +61,13 @@ export class AmsmFuelStrategy
                 ? now
                 : parsedUpdate;
 
-            const title = `Тековни цени на горива`;
-            const description = this.formatDescription(acf, country);
+            const description = this.formatDescription(acf);
 
             return {
                 externalId,
                 source: this.source,
                 category: this.category,
-                title,
+                title: `Тековни цени на горива`,
                 description,
                 status: 'ongoing',
                 observedAt: now,
@@ -96,7 +95,7 @@ export class AmsmFuelStrategy
         });
     }
 
-    private formatDescription(acf: AmsmFuelAcf, country: string): string {
+    private formatDescription(acf: AmsmFuelAcf): string {
         const p95Mkd = this.formatMkd(acf.petrol95);
         const p98Mkd = this.formatMkd(acf.petrol98);
         const dieselMkd = this.formatMkd(acf.diesel);
@@ -106,10 +105,10 @@ export class AmsmFuelStrategy
         const dieselEur = acf.dieseleur.toFixed(2);
 
         return (
-            `Актуелните малопродажни цени на нафтените деривати во ${country} изнесуваат: ` +
-            `бензин ЕУРОСУПЕР БС-95 се продава по цена од ${p95Mkd} ден/л (${p95Eur} EUR/л), ` +
-            `бензин ЕУРОСУПЕР БС-98 изнесува ${p98Mkd} ден/л (${p98Eur} EUR/л), ` +
-            `додека дизел ЕУРОДИЗЕЛ БС (Д-Е V) се точи по цена од ${dieselMkd} ден/л (${dieselEur} EUR/л).`
+            `Актуелни малопродажни цени: ` +
+            `бензин БС-95 = ${p95Mkd} ден/л (${p95Eur} EUR/л), ` +
+            `бензин БС-98 = ${p98Mkd} ден/л (${p98Eur} EUR/л), ` +
+            `Еуродизел = ${dieselMkd} ден/л (${dieselEur} EUR/л).`
         );
     }
 
