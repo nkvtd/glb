@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { MeteoalarmReportInsert } from '../../../core/types/meteoalarm.js';
 import {
     type MeteoalarmInfo,
@@ -181,9 +182,18 @@ export class MeteoalarmStrategy
                         validMkText,
                     });
 
-                    const externalId = target.code
-                        ? `${alert.identifier}-${target.code}`
-                        : `${alert.identifier}-${locationLabel}`;
+                    const externalId = createHash('sha256')
+                        .update(
+                            [
+                                awarenessType?.code ?? 'u',
+                                awarenessLevel?.code ?? 'x',
+                                startsAt.toISOString(),
+                                endsAt ? endsAt.toISOString() : 'open',
+                                target.code ?? locationLabel,
+                            ].join('|'),
+                        )
+                        .digest('hex')
+                        .slice(0, 32);
 
                     results.push({
                         externalId,

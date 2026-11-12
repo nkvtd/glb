@@ -136,10 +136,10 @@ It operates as two strictly separated processes sharing a single PostgreSQL + Po
                                    │  Read-Only Queries & DTO Mapping
                                    ▼
 ┌───────────────────────────────────────────────────────────────────────────┐
-│  Hono REST API Server (src/server.ts)                                	  	│
-│  • Rate Limiting, CORS, Secure Headers & Request ID Correlation      	  	│
+│  Hono REST API Server (src/server.ts)                               	  	│
+│  • Rate Limiting, CORS, Secure Headers & Request ID Correlation           │
 │  • Endpoints: /api/reports, /api/events, /api/municipalities         	    │
-│  • Live API: [https://glb.nkvtd.com/api](https://glb.nkvtd.com/api)     	│
+│  • Live API: [https://glb.nkvtd.com/api](https://glb.nkvtd.com/api)       │
 │  • Live Dashboard (glb::watch): https://glb.nkvtd.com                     │
 └───────────────────────────────────────────────────────────────────────────┘
 ```
@@ -156,7 +156,7 @@ The worker currently runs several active scraping strategies on their respective
 | `vodovod-skopje` | `water` | `reports` | `*/30 * * * *` | **JP Vodovod i Kanalizacija – Skopje** | Queries the ArcGIS MapServer for active and recent water/sewage interventions. Extracts `POINT(lng lat)` geometries, formats urgency and street details into prose, and resolves municipalities via text cascade with a PostGIS point-in-polygon fallback. |
 | `moepp` | `air_quality` | `reports` | `*/30 * * * *` | **Ministry of Environment (MOEPP)** | Fetches monitoring stations and hourly pollutant concentrations (`PM10`, `PM2.5`, `NO₂`, `O₃`, `SO₂`, `CO`). Resolves municipalities via PostGIS point-in-polygon (`ST_Covers`) with text fallback. Marks poor air quality (`index 04–06`) as `ongoing` (triggering a single alert per smog episode) and normal readings as `omitted` (stored for API querying without alert spam). |
 | `amsm-fuel` | `fuel_price` | `events` | `0 */2 * * *` | **AMSM (Auto Moto Association)** | Fetches retail fuel prices (`ЕУРОСУПЕР БС-95`, `ЕУРОСУПЕР БС-98`, `ЕУРОДИЗЕЛ`) in MKD and EUR. Hashes the active price decision so new events and alerts are only dispatched when retail prices change, automatically superseding the previous price record. |
-| `meteoalarm` | `weather` | `reports` | `*/15 * * * *` | **Meteoalarm (EUMETNET / UHMR)** | Scrapes official CAP weather warnings. Sanitizes text encodings, maps awareness types and severity levels into Macedonian prose, and fans out regional alerts (`NUTS3`) across all member municipalities via `resolveRegion()`. |
+| `meteoalarm` | `weather` | `reports` | `*/15 * * * *` | **Meteoalarm (EUMETNET / UHMR)** | Scrapes official CAP weather warnings. Sanitizes text encodings, maps awareness types and severity levels into Macedonian prose, and fans out regional alerts (`NUTS3`) across all member municipalities via `resolveRegion()`. Hashes event type, severity, onset, expiry, and municipality into a deterministic 32-character SHA-256 `externalId` so re-pushed warnings (rotating CAP `identifier`/`uuid`/`sent`) dedupe instead of spamming duplicate reports. |
 | `sensor-community` | `air_quality` | `reports` | `*/15 * * * *` | **Sensor.Community (airRohr)** | Aggregates private air quality and weather sensors (`PM10`, `PM2.5`, temperature, humidity, pressure) per municipality. Applies a 4-stage sanitization pipeline (filtering indoor nodes, dead fans, and fog condensation spikes) and computes a 20% trimmed mean. |
 | `emsc-csem` | `earthquake` | `reports` | `*/10 * * * *` | **EMSC-CSEM (FDSNWS)** | Queries recent earthquakes in a bounding box around Macedonia and resolves epicentres via PostGIS `ST_Covers`. Domestic quakes are kept at `M ≥ 2.0`; cross-border quakes only at `M ≥ 3.0`, stored without a municipality but with a spatial point so radius queries include felt border events. Quakes up to one hour old insert as `ongoing` for alerting and auto-end on the next reconciler tick. |
 | `vodovod-kumanovo` | `water` | `reports` | `*/30 * * * *` | **JP Vodovod – Kumanovo** | Scrapes daily water network defect and intervention lists via the WordPress REST API. Extracts individual street/settlement items, hashes post ID and normalized item text into a deterministic 32-character SHA-256 `externalId`, and maps `Europe/Skopje` daily bounds into `reports`. |

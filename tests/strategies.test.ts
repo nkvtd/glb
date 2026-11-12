@@ -666,16 +666,29 @@ describe('Scraping Strategies', () => {
             assert.equal(parsed.length, 2);
 
             const firstAlert = at(parsed, 0);
-            assert.equal(firstAlert.externalId, 'ALERT-1-MK0080901');
+            assert.match(firstAlert.externalId, /^[0-9a-f]{32}$/);
             assert.equal(firstAlert.locationLabel, 'Аеродром');
             assert.equal(firstAlert.title, 'Грмежи и невреме: Аеродром');
             assert.equal(firstAlert.status, 'ongoing');
             assert.doesNotMatch(present(firstAlert.description), /\?\?\?/);
 
             const secondAlert = at(parsed, 1);
-            assert.equal(secondAlert.externalId, 'ALERT-1-MK0080904');
+            assert.match(secondAlert.externalId, /^[0-9a-f]{32}$/);
             assert.equal(secondAlert.locationLabel, 'Гази Баба');
             assert.equal(secondAlert.title, 'Грмежи и невреме: Гази Баба');
+
+            const rePushed = await strategy.parse([
+                at(raw, 0),
+                {
+                    uuid: 'u-2',
+                    alert: { ...at(raw, 0).alert, identifier: 'ALERT-2' },
+                },
+            ]);
+            assert.equal(rePushed.length, 4);
+            assert.equal(at(rePushed, 0).externalId, firstAlert.externalId);
+            assert.equal(at(rePushed, 1).externalId, secondAlert.externalId);
+            assert.equal(at(rePushed, 2).externalId, firstAlert.externalId);
+            assert.equal(at(rePushed, 3).externalId, secondAlert.externalId);
 
             const ignored = await strategy.parse([
                 {
@@ -762,10 +775,7 @@ describe('Scraping Strategies', () => {
                 at(infoFallback, 0).startsAt?.getTime(),
                 now - 600_000,
             );
-            assert.match(
-                at(infoFallback, 0).externalId,
-                /^ALERT-1-Skopje region$/,
-            );
+            assert.match(at(infoFallback, 0).externalId, /^[0-9a-f]{32}$/);
 
             const validMacedonianText = await strategy.parse([
                 {
