@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { emscResponseSchema } from '../src/core/validation/emsc.js';
 import { vodovodSkopjeResponseSchema } from '../src/core/validation/vodovod-skopje.js';
+import type { WorldFiresHotspot } from '../src/core/validation/worldfires.js';
+import { worldFiresHotspotsResponseSchema } from '../src/core/validation/worldfires.js';
 import type { MunicipalityResolver } from '../src/modules/scraping/resolver.js';
 import { AmsmFuelStrategy } from '../src/modules/scraping/strategies/amsm-fuel.strategy.js';
 import { EmscStrategy } from '../src/modules/scraping/strategies/emsc.strategy.js';
@@ -12,6 +14,7 @@ import { SensorCommunityStrategy } from '../src/modules/scraping/strategies/sens
 import { VodovodKumanovoStrategy } from '../src/modules/scraping/strategies/vodovod-kumanovo.strategy.js';
 import { VodovodPrilepStrategy } from '../src/modules/scraping/strategies/vodovod-prilep.strategy.js';
 import { VodovodSkopjeStrategy } from '../src/modules/scraping/strategies/vodovod-skopje.strategy.js';
+import { WorldFiresStrategy } from '../src/modules/scraping/strategies/worldfires.strategy.js';
 import { at, present } from './test-utils.js';
 
 function createFakeResolver(
@@ -1364,7 +1367,7 @@ describe('Scraping Strategies', () => {
             const fallbackEvent = at(invalidUpdate, 0);
             assert.ok(fallbackEvent.startsAt instanceof Date);
             assert.ok(fallbackEvent.startsAt.getTime() >= beforeFallback);
-            assert.match(present(fallbackEvent.description), /во Македонија/);
+            assert.equal(fallbackEvent.rawPayload.country, 'Македонија');
         });
     });
 
@@ -1729,6 +1732,273 @@ describe('Scraping Strategies', () => {
                 pastSupply.endsAt?.toISOString(),
                 '2026-10-22T21:59:59.999Z',
             );
+        });
+    });
+
+    describe('WorldFiresStrategy', () => {
+        const strategy = new WorldFiresStrategy(
+            'https://worldfires.test/api/v1/hotspots',
+            '*/15 * * * *',
+            resolver,
+        );
+
+        const makeHotspot = (
+            overrides: Partial<WorldFiresHotspot> = {},
+        ): WorldFiresHotspot => ({
+            time_utc: new Date(Date.now() - 60_000),
+            lat: 42,
+            lon: 21.42,
+            frp_mw: 12.34,
+            satellite: ' NOAA-20 ',
+            sensor: ' viirs ',
+            ...overrides,
+        });
+
+        it('maps domestic detections to ongoing reports with stable IDs and audit payloads', async () => {
+            const item = makeHotspot();
+            const [report] = await strategy.parse([item]);
+            const parsed = present(report);
+
+            assert.equal(parsed.source, 'worldfires-hotspots');
+            assert.equal(parsed.category, 'wildfire');
+            assert.equal(parsed.municipalityCode, 'MK0080907');
+            assert.equal(parsed.locationLabel, 'Карпош');
+            assert.equal(parsed.status, 'ongoing');
+            assert.equal(parsed.endsAt, null);
+            assert.equal(parsed.startsAt, item.time_utc);
+            assert.equal(parsed.geom, 'SRID=4326;POINT(21.42 42)');
+            assert.match(
+                parsed.externalId,
+                /^worldfires-\d{8}T\d{4}Z-42\.000-21\.420-t2$/,
+            );
+            assert.equal(
+                at(await strategy.parse([item]), 0).externalId,
+                parsed.externalId,
+            );
+            assert.equal(parsed.title, 'Пожар: Карпош');
+            assert.match(
+                present(parsed.description),
+                /Детектиран е пожар на отворен простор со умерен интензитет во подрачјето на Карпош\./,
+            );
+            assert.deepEqual(parsed.rawPayload, {
+                detectedAt: item.time_utc,
+                frpMw: 12.34,
+                hotspotCount: 1,
+                satellite: 'NOAA-20',
+                sensor: 'VIIRS',
+                coordinates: { lng: 21.42, lat: 42 },
+                hotspots: [{ lat: 42, lng: 21.42, frpMw: 12.34 }],
+            });
+            assert.equal('stateFeed' in strategy, false);
+        });
+
+        it('transitively clusters bridge hotspots independent of input order', async () => {
+            const detectedAt = new Date(Date.now() - 60_000);
+            const first = makeHotspot({
+                time_utc: detectedAt,
+                lat: 42,
+                lon: 21.42,
+                frp_mw: 12,
+            });
+            const second = makeHotspot({
+                time_utc: detectedAt,
+                lat: 42.024,
+                lon: 21.42,
+                frp_mw: 13,
+            });
+            const bridge = makeHotspot({
+                time_utc: detectedAt,
+                lat: 42.012,
+                lon: 21.42,
+                frp_mw: 14,
+            });
+            const forward = present(
+                at(await strategy.parse([first, second, bridge]), 0),
+            );
+            const reversed = present(
+                at(await strategy.parse([bridge, second, first]), 0),
+            );
+
+            assert.equal(forward.rawPayload.hotspotCount, 3);
+            assert.equal(forward.rawPayload.frpMw, 39);
+            assert.equal(forward.geom, 'SRID=4326;POINT(21.42 42.012)');
+            assert.match(
+                present(forward.description),
+                /со умерен интензитет во подрачјето на Карпош \(3 жаришта\)\./,
+            );
+            assert.equal(reversed.externalId, forward.externalId);
+            assert.equal(reversed.geom, forward.geom);
+            assert.deepEqual(
+                reversed.rawPayload.hotspots,
+                forward.rawPayload.hotspots,
+            );
+            assert.deepEqual(forward.rawPayload.hotspots, [
+                { lat: 42, lng: 21.42, frpMw: 12 },
+                { lat: 42.012, lng: 21.42, frpMw: 14 },
+                { lat: 42.024, lng: 21.42, frpMw: 13 },
+            ]);
+        });
+
+        it('emits tier escalation reports across satellite passes without same-tier duplicates', async () => {
+            const t0 = new Date(Date.now() - 3 * 60 * 60_000);
+            const t1 = new Date(t0.getTime() + 60 * 60_000);
+            const t2 = new Date(t1.getTime() + 2 * 60 * 60_000);
+            const ignition = makeHotspot({ time_utc: t0, frp_mw: 5 });
+            const eruptionA = makeHotspot({
+                time_utc: t1,
+                lat: 42.005,
+                frp_mw: 30,
+            });
+            const eruptionB = makeHotspot({
+                time_utc: t1,
+                lat: 42.005,
+                frp_mw: 35,
+            });
+            const overpass = makeHotspot({
+                time_utc: t2,
+                lat: 42.005,
+                frp_mw: 55,
+            });
+
+            const initialRows = await strategy.parse([
+                ignition,
+                eruptionA,
+                eruptionB,
+            ]);
+            assert.equal(initialRows.length, 2);
+
+            const lowerTier = present(at(initialRows, 0));
+            assert.match(lowerTier.externalId, /-t1$/);
+            assert.equal(lowerTier.status, 'ended');
+            assert.equal(lowerTier.startsAt, t0);
+            assert.equal(lowerTier.endsAt, t1);
+            assert.equal(lowerTier.title, 'Пожар од помал обем: Карпош');
+
+            const peakTier = present(at(initialRows, 1));
+            assert.match(peakTier.externalId, /-t3$/);
+            assert.equal(peakTier.status, 'ongoing');
+            assert.equal(peakTier.startsAt, t0);
+            assert.equal(peakTier.endsAt, null);
+            assert.equal(peakTier.title, 'Силен пожар: Карпош');
+            assert.equal(peakTier.rawPayload.hotspotCount, 2);
+            assert.equal(peakTier.rawPayload.frpMw, 65);
+
+            const allRows = await strategy.parse([
+                ignition,
+                eruptionA,
+                eruptionB,
+                overpass,
+            ]);
+            assert.equal(allRows.length, 2);
+            assert.deepEqual(
+                allRows.map((row) => row.externalId),
+                initialRows.map((row) => row.externalId),
+            );
+        });
+
+        it('filters minor border detections and ends older strong detections', async () => {
+            const outsideResolver = new WorldFiresStrategy(
+                'https://worldfires.test/api/v1/hotspots',
+                '*/15 * * * *',
+                createFakeResolver({ resolveCoords: async () => null }),
+            );
+            assert.deepEqual(
+                await outsideResolver.parse([makeHotspot({ frp_mw: 9.99 })]),
+                [],
+            );
+
+            const borderTime = new Date(Date.now() - 60_000);
+            const [clusteredBorder] = await outsideResolver.parse([
+                makeHotspot({
+                    time_utc: borderTime,
+                    lat: 41.8,
+                    lon: 20.5,
+                    frp_mw: 6,
+                }),
+                makeHotspot({
+                    time_utc: borderTime,
+                    lat: 41.81,
+                    lon: 20.5,
+                    frp_mw: 5,
+                }),
+            ]);
+            assert.equal(present(clusteredBorder).rawPayload.frpMw, 11);
+            assert.equal(
+                present(clusteredBorder).locationLabel,
+                'Пограничен регион',
+            );
+            assert.equal(
+                present(clusteredBorder).title,
+                'Пожар: Пограничен регион',
+            );
+
+            const oldDetection = makeHotspot({
+                time_utc: new Date(Date.now() - 8 * 60 * 60_000),
+                lat: 41.8,
+                lon: 20.5,
+                frp_mw: 50,
+            });
+            const [report] = await outsideResolver.parse([oldDetection]);
+            const parsed = present(report);
+            assert.equal(parsed.municipalityCode, null);
+            assert.equal(parsed.locationLabel, 'Пограничен регион');
+            assert.equal(parsed.status, 'ended');
+            assert.equal(parsed.endsAt, oldDetection.time_utc);
+            assert.equal(parsed.title, 'Силен пожар: Пограничен регион');
+            assert.match(
+                present(parsed.description),
+                /во непосредна близина на државната граница со ризик од прекугранично проширување/,
+            );
+        });
+
+        it('formats four intensity tiers, normalizes sensor labels, and skips invalid coordinates or FRP', async () => {
+            const tiers = [
+                [9.99, 'Пожар од помал обем', /слаб интензитет/],
+                [10, 'Пожар', /умерен интензитет/],
+                [50, 'Силен пожар', /со висок интензитет/],
+                [
+                    150,
+                    'Пожар од големи размери',
+                    /исклучително висок интензитет/,
+                ],
+            ] as const;
+            for (const [frpMw, title, prose] of tiers) {
+                const [report] = await strategy.parse([
+                    makeHotspot({ frp_mw: frpMw }),
+                ]);
+                assert.equal(present(report).title, `${title}: Карпош`);
+                assert.match(present(present(report).description), prose);
+            }
+
+            const [normalizedSensor] = await strategy.parse([
+                makeHotspot({ satellite: 'VIIRS', sensor: 'viirs' }),
+            ]);
+            const sensorPayload = present(normalizedSensor).rawPayload;
+            assert.equal(sensorPayload.satellite, 'VIIRS');
+            assert.equal(sensorPayload.sensor, 'VIIRS');
+
+            const invalid = await strategy.parse([
+                makeHotspot({ lat: Number.NaN }),
+                makeHotspot({ lon: Number.POSITIVE_INFINITY }),
+                makeHotspot({ frp_mw: Number.NaN }),
+                makeHotspot({ frp_mw: Number.POSITIVE_INFINITY }),
+                makeHotspot({ frp_mw: -1 }),
+            ]);
+            assert.deepEqual(invalid, []);
+
+            const wireResult = worldFiresHotspotsResponseSchema.parse({
+                data: [
+                    {
+                        time_utc: '2026-11-08T12:08:00Z',
+                        lat: '42',
+                        lon: '21.42',
+                        frp_mw: '9.5',
+                        satellite: 'VIIRS',
+                        sensor: 'VNP14IMG',
+                    },
+                ],
+            });
+            assert.equal(at(wireResult.data, 0).frp_mw, 9.5);
         });
     });
 });

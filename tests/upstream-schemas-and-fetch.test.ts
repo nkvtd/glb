@@ -12,6 +12,7 @@ import { sensorCommunityResponseSchema } from '../src/core/validation/sensor-com
 import { vodovodKumanovoResponseSchema } from '../src/core/validation/vodovod-kumanovo.js';
 import { vodovodPrilepResponseSchema } from '../src/core/validation/vodovod-prilep.js';
 import { vodovodSkopjeResponseSchema } from '../src/core/validation/vodovod-skopje.js';
+import { worldFiresHotspotsResponseSchema } from '../src/core/validation/worldfires.js';
 import type { MunicipalityResolver } from '../src/modules/scraping/resolver.js';
 import { AmsmFuelStrategy } from '../src/modules/scraping/strategies/amsm-fuel.strategy.js';
 import { EmscStrategy } from '../src/modules/scraping/strategies/emsc.strategy.js';
@@ -22,6 +23,7 @@ import { SensorCommunityStrategy } from '../src/modules/scraping/strategies/sens
 import { VodovodKumanovoStrategy } from '../src/modules/scraping/strategies/vodovod-kumanovo.strategy.js';
 import { VodovodPrilepStrategy } from '../src/modules/scraping/strategies/vodovod-prilep.strategy.js';
 import { VodovodSkopjeStrategy } from '../src/modules/scraping/strategies/vodovod-skopje.strategy.js';
+import { WorldFiresStrategy } from '../src/modules/scraping/strategies/worldfires.strategy.js';
 import { at, present } from './test-utils.js';
 
 const index = { code: '04', color: '#f00', name: 'Лош', nameEN: 'Poor' };
@@ -182,6 +184,14 @@ const prilepPost = {
             '<p>Водоснабдувањето на ден 05.11.2026 ќе биде нормално.</p><h2>Прекин во водоснабдувањето заради санација на дефекти и приклучоци во периодот од 08 до 14 часот ќе има на следните улици и делови од Општина Прилеп:</h2><h2>– ул. Лазо Филипоски</h2>',
     },
 };
+const worldFiresHotspot = {
+    time_utc: '2026-11-08T12:08:00Z',
+    lat: '42.088',
+    lon: '21.712',
+    frp_mw: '12.4',
+    satellite: '  NOAA-20 ',
+    sensor: 'viirs',
+};
 
 function fakeResolver(): MunicipalityResolver {
     return {
@@ -290,6 +300,16 @@ describe('Upstream response schemas', () => {
         );
         assert.equal(prilepResult.id, 7357);
 
+        const worldFiresResult = at(
+            worldFiresHotspotsResponseSchema.parse({
+                data: [worldFiresHotspot],
+            }).data,
+            0,
+        );
+        assert.ok(worldFiresResult.time_utc instanceof Date);
+        assert.equal(worldFiresResult.lat, 42.088);
+        assert.equal(worldFiresResult.frp_mw, 12.4);
+
         assert.equal(
             evnResponseSchema.safeParse([{ prekinID: 'incomplete' }]).success,
             false,
@@ -378,6 +398,14 @@ describe('Strategy fetch adapters', () => {
                 [prilepPost],
             ],
             [new AmsmFuelStrategy('https://amsm.test', '* * * * *'), [fuel]],
+            [
+                new WorldFiresStrategy(
+                    'https://worldfires.test/api/v1/hotspots',
+                    '* * * * *',
+                    fakeResolver(),
+                ),
+                { data: [worldFiresHotspot] },
+            ],
         ] as const;
 
         for (const [strategy, payload] of strategies) {
@@ -419,6 +447,18 @@ describe('Strategy fetch adapters', () => {
             async () => new Response(null, { status: 204 }),
             async () => {
                 assert.deepEqual(await strategy.fetch(), []);
+            },
+        );
+
+        const worldFiresStrategy = new WorldFiresStrategy(
+            'https://worldfires.test/api/v1/hotspots',
+            '* * * * *',
+            fakeResolver(),
+        );
+        await withFetch(
+            async () => new Response(null, { status: 204 }),
+            async () => {
+                assert.deepEqual(await worldFiresStrategy.fetch(), []);
             },
         );
 
@@ -517,6 +557,11 @@ describe('Strategy fetch adapters', () => {
                 '* * * * *',
             ),
             new AmsmFuelStrategy('https://amsm.test', '* * * * *'),
+            new WorldFiresStrategy(
+                'https://worldfires.test/api/v1/hotspots',
+                '* * * * *',
+                fakeResolver(),
+            ),
         ];
         for (const strategy of simpleStrategies) {
             await withFetch(

@@ -13,6 +13,7 @@ import { SensorCommunityStrategy } from './modules/scraping/strategies/sensor-co
 import { VodovodKumanovoStrategy } from './modules/scraping/strategies/vodovod-kumanovo.strategy.js';
 import { VodovodPrilepStrategy } from './modules/scraping/strategies/vodovod-prilep.strategy.js';
 import { VodovodSkopjeStrategy } from './modules/scraping/strategies/vodovod-skopje.strategy.js';
+import { WorldFiresStrategy } from './modules/scraping/strategies/worldfires.strategy.js';
 
 async function main() {
     logger.info('[Worker] starting...');
@@ -69,6 +70,11 @@ async function main() {
         new NbrmRatesStrategy(
             'https://www.nbrm.mk/KLServiceNOV/GetExchangeRate',
             '5 0 * * *',
+        ),
+        new WorldFiresStrategy(
+            'https://worldfires.org/api/v1/hotspots?bbox=40.8,20.4,42.4,23.0&hours=24',
+            '*/15 * * * *',
+            resolver,
         ),
     ];
 
