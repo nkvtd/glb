@@ -6,6 +6,8 @@ import { MunicipalityResolver } from './modules/scraping/resolver.js';
 import { AmsmFuelStrategy } from './modules/scraping/strategies/amsm-fuel.strategy.js';
 import { EmscStrategy } from './modules/scraping/strategies/emsc.strategy.js';
 import { EvnStrategy } from './modules/scraping/strategies/evn.strategy.js';
+import { IodaEventsStrategy } from './modules/scraping/strategies/ioda-events.strategy.js';
+import { IodaReportsStrategy } from './modules/scraping/strategies/ioda-reports.strategy.js';
 import { MeteoalarmStrategy } from './modules/scraping/strategies/meteoalarm.strategy.js';
 import { MoeppStrategy } from './modules/scraping/strategies/moepp.strategy.js';
 import { NbrmRatesStrategy } from './modules/scraping/strategies/nbrm-rates.strategy.js';
@@ -74,6 +76,15 @@ async function main() {
         new WorldFiresStrategy(
             'https://worldfires.org/api/v1/hotspots?bbox=40.8,20.4,42.4,23.0&hours=24',
             '*/15 * * * *',
+            resolver,
+        ),
+        new IodaEventsStrategy(
+            'https://api.ioda.inetintel.cc.gatech.edu/v2',
+            '*/10 * * * *',
+        ),
+        new IodaReportsStrategy(
+            'https://api.ioda.inetintel.cc.gatech.edu/v2',
+            '*/10 * * * *',
             resolver,
         ),
     ];

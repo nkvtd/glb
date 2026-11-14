@@ -115,7 +115,7 @@ It operates as two strictly separated processes sharing a single PostgreSQL + Po
 │        EVN           •   Vodovod Skopje           •   MOEPP (Air)         │
 │        AMSM          •   Meteoalarm               •   Sensor.Community    │
 │        EMSC          •   Vodovod Kumanovo         •   Vodovod Prilep      │
-│        NBRM          •   WorldFires (VIIRS)                               │
+│        NBRM          •   WorldFires (VIIRS)       •   IODA                │
 └───────────────────────────────────────────────────────────────────────────┘
                                    │  Scheduled Cron Jobs
                                    ▼
@@ -163,10 +163,12 @@ The worker currently runs several active scraping strategies on their respective
 | `vodovod-prilep` | `water` | `reports` | `*/30 * * * *` | **JKP Vodovod i Kanalizacija – Prilep** | Scrapes daily water supply bulletins and emergency notices via the WordPress REST API. Stores the daily municipal supply summary (`omitted` when normal, `ongoing` when disrupted) and emits per-street outage reports with their scheduled `Europe/Skopje` time window (e.g., `08:00–14:00`). |
 | `nbrm-rates` | `currency_exchange` | `events` | `5 0 * * *` | **National Bank (NBRM)** | Fetches the current daily exchange-rate list, keeps one event for the active list, and retains the rates and application dates in its raw payload. |
 | `worldfires-hotspots` | `wildfire` | `reports` | `*/15 * * * *` | **WorldFires (NASA FIRMS VIIRS)** | Clusters 375 m VIIRS thermal anomalies within ~1.5 km and 6 hours into fire incidents, resolving municipalities via PostGIS `ST_Covers` (keeping cross-border passes at `FRP ≥ 10 MW`). Tracks chronological satellite passes so intensifying fires emit tier-escalated alerts and auto-close superseded tiers without duplicate steady-fire spam. |
+| `ioda` | `internet` | `events` | `*/10 * * * *` | **IODA (Georgia Tech)** | Tracks national internet health from 24-hour `bgp` and `ping-slash24` raw signals for the country and 15 domestic ISPs, aggregating multi-ASN operators. Normal readings are stored as `omitted`; degraded or outage states become `ongoing` state-feed events naming the affected operators. |
+| `ioda-regions` | `internet` | `reports` | `*/10 * * * *` | **IODA (Georgia Tech)** | Fetches 24-hour regional signals for Macedonian municipalities and aggregates them per resolved municipality. Regions are mapped through `MunicipalityResolver` (with small IODA-specific overrides); normal areas are `omitted` while degraded/outage areas are `ongoing`. |
 
 > **Supported Schema Categories & Statuses:**
-> - **Localized Reports (`reports`):** `power`, `water`, `road`, `weather`, `wildfire`, `air_quality`, `earthquake`
-> - **National Events (`events`):** `fuel_price`, `currency_exchange`
+> - **Localized Reports (`reports`):** `power`, `water`, `road`, `weather`, `wildfire`, `air_quality`, `earthquake`, `internet`
+> - **National Events (`events`):** `fuel_price`, `currency_exchange`, `internet`
 > - **Lifecycle Statuses:** `scheduled`, `ongoing`, `ended`, `unknown`, `omitted`
 
 ---
@@ -214,7 +216,7 @@ All endpoints are read-only (`GET`), CORS-enabled, and rate-limited to **60 requ
 | `sortBy` | `string` | `startsAt` | Sort column: `id`, `observedAt`, `startsAt`, or `endsAt`. |
 | `sortDirection` | `string` | `desc` | Sort direction: `asc` or `desc`. |
 | `status` | `string` | — | Comma-separated statuses: `scheduled`, `ongoing`, `ended`, `unknown`, `omitted`. |
-| `category` | `string` | — | Comma-separated categories: `power`, `water`, `road`, `weather`, `wildfire`, `air_quality`, `earthquake`. |
+| `category` | `string` | — | Comma-separated categories: `power`, `water`, `road`, `weather`, `wildfire`, `air_quality`, `earthquake`, `internet`. |
 | `source` | `string` | — | Upstream scraper source identifier (e.g., `evn`, `vodovod-skopje`, `moepp`). |
 | `municipalityCode` | `string` | — | Filter by official `PCODEX` code (e.g., `MK0080903`). |
 | `search` | `string` | — | Case-insensitive substring search (`1`–`100` chars) across `title`, `description`, and `locationLabel`. |
@@ -228,7 +230,7 @@ All endpoints are read-only (`GET`), CORS-enabled, and rate-limited to **60 requ
 
 ### Querying Events (`/api/events`)
 
-Supports `cursor`, `pageSize` (default `20`), `sortBy` (`id`, `observedAt`, `startsAt`, `endsAt`), `sortDirection` (`asc`, `desc`), `status` (comma-separated), `category` (comma-separated: `fuel_price`, `currency_exchange`), `source`, `search` (`title`, `description`), `from`, and `to`.
+Supports `cursor`, `pageSize` (default `20`), `sortBy` (`id`, `observedAt`, `startsAt`, `endsAt`), `sortDirection` (`asc`, `desc`), `status` (comma-separated), `category` (comma-separated: `fuel_price`, `currency_exchange`, `internet`), `source`, `search` (`title`, `description`), `from`, and `to`.
 
 ---
 

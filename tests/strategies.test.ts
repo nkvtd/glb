@@ -8,6 +8,8 @@ import type { MunicipalityResolver } from '../src/modules/scraping/resolver.js';
 import { AmsmFuelStrategy } from '../src/modules/scraping/strategies/amsm-fuel.strategy.js';
 import { EmscStrategy } from '../src/modules/scraping/strategies/emsc.strategy.js';
 import { EvnStrategy } from '../src/modules/scraping/strategies/evn.strategy.js';
+import { IodaEventsStrategy } from '../src/modules/scraping/strategies/ioda-events.strategy.js';
+import { IodaReportsStrategy } from '../src/modules/scraping/strategies/ioda-reports.strategy.js';
 import { MeteoalarmStrategy } from '../src/modules/scraping/strategies/meteoalarm.strategy.js';
 import { MoeppStrategy } from '../src/modules/scraping/strategies/moepp.strategy.js';
 import { SensorCommunityStrategy } from '../src/modules/scraping/strategies/sensor-community.strategy.js';
@@ -2009,6 +2011,265 @@ describe('Scraping Strategies', () => {
                 ],
             });
             assert.equal(at(wireResult.data, 0).frp_mw, 9.5);
+        });
+    });
+
+    describe('IodaEventsStrategy', () => {
+        const fixedNow = new Date('2026-11-13T12:00:00Z');
+        const timestamp = Math.floor(fixedNow.getTime() / 1000);
+        const makeSeries = (
+            entityType: string,
+            entityCode: string,
+            entityName: string,
+            datasource: string,
+            values: Array<number | null>,
+        ) => ({
+            entityType,
+            entityCode,
+            entityName,
+            datasource,
+            from: timestamp - (values.length - 1) * 300,
+            until: timestamp,
+            step: 300,
+            values,
+        });
+
+        it('emits a natural-language national state event and handles trailing nulls', async () => {
+            const strategy = new IodaEventsStrategy(
+                'https://ioda.test/v2',
+                '*/10 * * * *',
+                () => fixedNow,
+            );
+            assert.equal(strategy.stateFeed, true);
+            const rows = await strategy.parse({
+                countrySeries: [
+                    makeSeries('country', 'MK', 'North Macedonia', 'bgp', [
+                        100,
+                        100,
+                        94,
+                        null,
+                    ]),
+                    makeSeries(
+                        'country',
+                        'MK',
+                        'North Macedonia',
+                        'ping-slash24',
+                        [100, 100, 100],
+                    ),
+                ],
+                asnSeries: [],
+            });
+            const row = at(rows, 0);
+            assert.equal(row.status, 'ongoing');
+            assert.equal(row.endsAt, null);
+            assert.equal(row.rawPayload.status, 'degraded');
+            assert.equal(row.title, 'Отежнат национален интернет сообраќај');
+            assert.match(row.title, /интернет/);
+            assert.match(
+                present(row.description),
+                /Намалена достапност на националната интернет мрежа во Македонија \(95,8% од капацитетот\)\./,
+            );
+            assert.doesNotMatch(
+                present(row.description),
+                /BGP|ping-slash24|\d{2}\.\d{2}\./i,
+            );
+            const recovered = at(
+                await strategy.parse({
+                    countrySeries: [
+                        makeSeries(
+                            'country',
+                            'MK',
+                            'North Macedonia',
+                            'bgp',
+                            [100, 50, 100],
+                        ),
+                    ],
+                    asnSeries: [],
+                }),
+                0,
+            );
+            assert.equal(recovered.rawPayload.status, 'normal');
+            assert.equal(recovered.status, 'omitted');
+            assert.equal(recovered.title, 'Состојба на интернет мрежата');
+            assert.ok(recovered.externalId.endsWith(`-normal-${timestamp}`));
+            const previousDayRecovery = at(
+                await strategy.parse({
+                    countrySeries: [
+                        {
+                            ...makeSeries(
+                                'country',
+                                'MK',
+                                'North Macedonia',
+                                'bgp',
+                                [100, 50, 100],
+                            ),
+                            from: timestamp - 13 * 3600 - 600,
+                        },
+                    ],
+                    asnSeries: [],
+                }),
+                0,
+            );
+            assert.equal(
+                previousDayRecovery.externalId,
+                'ioda-mk-2026-11-13-normal',
+            );
+        });
+
+        it('aggregates A1 multi-ASN metrics and returns no row without a positive baseline', async () => {
+            const strategy = new IodaEventsStrategy(
+                'https://ioda.test/v2',
+                '* * * * *',
+                () => fixedNow,
+            );
+            const a1Signals = ['16333', '43612', '57374', '43494'].map((code) =>
+                makeSeries('asn', code, 'A1', 'bgp', [10, 10, 0]),
+            );
+            const rows = await strategy.parse({
+                countrySeries: [
+                    makeSeries('country', 'MK', 'MK', 'bgp', [100, 100, 0]),
+                ],
+                asnSeries: [
+                    ...a1Signals,
+                    makeSeries('asn', '6821', 'Telekom', 'bgp', [10, 10, 0]),
+                ],
+            });
+            const row = at(rows, 0);
+            assert.equal(row.rawPayload.operators[1]?.bgp?.baseline, 40);
+            assert.equal(row.rawPayload.operators[1]?.status, 'outage');
+            assert.equal(row.rawPayload.status, 'outage');
+            assert.equal(row.title, 'Национален прекин на интернет мрежата');
+            assert.match(
+                present(row.description),
+                /Национален прекин на интернет сообраќајот во Македонија \(0% достапност\), погодени оператори: Македонски Телеком \(0%\), А1 Македонија \(0%\)\./,
+            );
+            assert.deepEqual(row.rawPayload.affectedOperators, [
+                'Македонски Телеком',
+                'А1 Македонија',
+            ]);
+            assert.equal(
+                await strategy
+                    .parse({
+                        countrySeries: [
+                            makeSeries('country', 'MK', 'MK', 'bgp', [0, 0, 0]),
+                        ],
+                        asnSeries: [],
+                    })
+                    .then((result) => result.length),
+                0,
+            );
+        });
+    });
+
+    describe('IodaReportsStrategy', () => {
+        const fixedNow = new Date('2026-11-13T12:00:00Z');
+        const timestamp = Math.floor(fixedNow.getTime() / 1000);
+        const names: Record<string, string> = {
+            Štip: 'MK0021100',
+            Струмица: 'MK0041000',
+            Кичево: 'MK0030700',
+            Tetovo: 'MK0060900',
+        };
+        const regions: Record<
+            string,
+            Array<{ code: string; nameMk: string }>
+        > = {
+            MK002: [{ code: 'MK0021100', nameMk: 'Штип' }],
+            MK004: [{ code: 'MK0041000', nameMk: 'Струмица' }],
+            MK003: [{ code: 'MK0030700', nameMk: 'Кичево' }],
+            MK006: [{ code: 'MK0060900', nameMk: 'Тетово' }],
+        };
+        const resolver = createFakeResolver({
+            resolveText: (text) => (text ? (names[text] ?? null) : null),
+            resolveRegion: (regionCode) =>
+                regionCode ? (regions[regionCode] ?? []) : [],
+        });
+        const makeRegion = (
+            code: string,
+            name: string,
+            datasource: string,
+            values: Array<number | null>,
+        ) => ({
+            entityType: 'region',
+            entityCode: code,
+            entityName: name,
+            datasource,
+            from: timestamp - (values.length - 1) * 300,
+            until: timestamp,
+            step: 300,
+            values,
+        });
+
+        it('resolves regions and stores normal versus degraded state-feed reports', async () => {
+            const strategy = new IodaReportsStrategy(
+                'https://ioda.test/v2',
+                '*/10 * * * *',
+                resolver,
+                () => fixedNow,
+            );
+            assert.equal(strategy.stateFeed, true);
+            const rows = await strategy.parse([
+                makeRegion('2602', 'Štip', 'bgp', [100, 50, 100]),
+                makeRegion('2654', 'Southeastern', 'bgp', [100, 100, 50]),
+                makeRegion('2643', 'Drugovo', 'bgp', [10, 10, 10]),
+                makeRegion('2648', 'Tetovo', 'bgp', [100, 100, 85]),
+                makeRegion('2592', 'Skopje', 'bgp', [20, 20, 20]),
+                makeRegion('4870', 'Unknown', 'bgp', [20, 20, 20]),
+            ]);
+            assert.equal(rows.length, 4);
+            assert.equal(at(rows, 0).municipalityCode, 'MK0021100');
+            assert.equal(at(rows, 0).locationLabel, 'Штип');
+            assert.equal(at(rows, 0).status, 'omitted');
+            assert.equal(at(rows, 0).title, 'Интернет мрежа: Штип');
+            assert.equal(
+                present(at(rows, 0).description),
+                'Интернет сообраќајот во Штип се одвива нормално (100% достапност).',
+            );
+            assert.equal(
+                at(rows, 0).externalId,
+                'MK0021100-2026-11-13T12:00:00Z',
+            );
+            assert.equal(at(rows, 1).municipalityCode, 'MK0041000');
+            assert.equal(at(rows, 1).status, 'ongoing');
+            assert.equal(at(rows, 1).rawPayload.status, 'outage');
+            assert.equal(at(rows, 1).title, 'Прекин на интернет: Струмица');
+            assert.equal(
+                present(at(rows, 1).description),
+                'Прекин во интернет сообраќајот во Струмица (50% достапност).',
+            );
+            assert.equal(at(rows, 2).municipalityCode, 'MK0030700');
+            assert.equal(at(rows, 2).locationLabel, 'Кичево');
+            assert.equal(at(rows, 3).municipalityCode, 'MK0060900');
+            assert.equal(at(rows, 3).rawPayload.status, 'degraded');
+            assert.equal(at(rows, 3).status, 'ongoing');
+            assert.equal(
+                at(rows, 3).title,
+                'Отежнат интернет сообраќај: Тетово',
+            );
+            assert.equal(
+                present(at(rows, 3).description),
+                'Намалена достапност на интернет мрежата во Тетово (85% од вообичаениот капацитет).',
+            );
+            assert.doesNotMatch(
+                present(at(rows, 1).description),
+                /BGP|ping-slash24|\d{2}\.\d{2}\./i,
+            );
+        });
+
+        it('skips regions that cannot be resolved or have no positive baseline', async () => {
+            const strategy = new IodaReportsStrategy(
+                'https://ioda.test/v2',
+                '* * * * *',
+                resolver,
+                () => fixedNow,
+            );
+            assert.deepEqual(
+                await strategy.parse([
+                    makeRegion('2602', 'Štip', 'bgp', [0, 0, 0]),
+                    makeRegion('9999', 'Atlantis', 'bgp', [10, 10, 10]),
+                ]),
+                [],
+            );
         });
     });
 });

@@ -69,8 +69,14 @@ export class MunicipalityResolver {
             if (match) return match;
         }
 
+        const spaceNormalized = normalized.replace(/-/g, ' ');
         for (const [name, code] of this.textCache.entries()) {
-            if (normalized.includes(name)) return code;
+            if (
+                normalized.includes(name) ||
+                spaceNormalized.includes(name.replace(/-/g, ' '))
+            ) {
+                return code;
+            }
         }
 
         return null;
@@ -126,7 +132,19 @@ export class MunicipalityResolver {
 
     private normalize(text: string): string {
         return text
+            .normalize('NFD')
+            .replace(/(\p{Script=Latin})\p{M}+/gu, '$1')
+            .normalize('NFC')
             .toUpperCase()
+            .replace(/CH/g, 'C')
+            .replace(/SH/g, 'S')
+            .replace(/TS/g, 'C')
+            .replace(/ZH/g, 'Z')
+            .replace(/GJ/g, 'G')
+            .replace(/KJ/g, 'K')
+            .replace(/LJ/g, 'L')
+            .replace(/NJ/g, 'N')
+            .replace(/DZ/g, 'D')
             .replace(/\s*-\s*/g, '-')
             .replace(/\s+/g, ' ')
             .trim();

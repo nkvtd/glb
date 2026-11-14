@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import { amsmFuelResponseSchema } from '../src/core/validation/amsm-fuel.js';
 import { emscResponseSchema } from '../src/core/validation/emsc.js';
 import { evnResponseSchema } from '../src/core/validation/evn.js';
+import { iodaSignalsResponseSchema } from '../src/core/validation/ioda.js';
 import { meteoalarmResponseSchema } from '../src/core/validation/meteoalarm.js';
 import {
     moeppMeasurementsResponseSchema,
@@ -17,6 +18,8 @@ import type { MunicipalityResolver } from '../src/modules/scraping/resolver.js';
 import { AmsmFuelStrategy } from '../src/modules/scraping/strategies/amsm-fuel.strategy.js';
 import { EmscStrategy } from '../src/modules/scraping/strategies/emsc.strategy.js';
 import { EvnStrategy } from '../src/modules/scraping/strategies/evn.strategy.js';
+import { IodaEventsStrategy } from '../src/modules/scraping/strategies/ioda-events.strategy.js';
+import { IodaReportsStrategy } from '../src/modules/scraping/strategies/ioda-reports.strategy.js';
 import { MeteoalarmStrategy } from '../src/modules/scraping/strategies/meteoalarm.strategy.js';
 import { MoeppStrategy } from '../src/modules/scraping/strategies/moepp.strategy.js';
 import { SensorCommunityStrategy } from '../src/modules/scraping/strategies/sensor-community.strategy.js';
@@ -192,7 +195,6 @@ const worldFiresHotspot = {
     satellite: '  NOAA-20 ',
     sensor: 'viirs',
 };
-
 function fakeResolver(): MunicipalityResolver {
     return {
         resolveText: () => null,
@@ -309,6 +311,30 @@ describe('Upstream response schemas', () => {
         assert.ok(worldFiresResult.time_utc instanceof Date);
         assert.equal(worldFiresResult.lat, 42.088);
         assert.equal(worldFiresResult.frp_mw, 12.4);
+
+        const iodaSeries = {
+            entityType: 'country',
+            entityCode: 'MK',
+            entityName: 'North Macedonia',
+            datasource: 'bgp',
+            from: 1_762_000_000,
+            until: 1_762_001_800,
+            step: 300,
+            values: [100, null, 90],
+        };
+        const iodaEnvelope = iodaSignalsResponseSchema.parse({
+            error: null,
+            data: [[iodaSeries]],
+        });
+        assert.equal(iodaEnvelope.error, null);
+        assert.equal(at(at(present(iodaEnvelope.data), 0), 0).entityCode, 'MK');
+
+        const iodaErrorEnvelope = iodaSignalsResponseSchema.parse({
+            error: 'invalid datasource',
+            data: null,
+        });
+        assert.equal(iodaErrorEnvelope.error, 'invalid datasource');
+        assert.equal(iodaErrorEnvelope.data, null);
 
         assert.equal(
             evnResponseSchema.safeParse([{ prekinID: 'incomplete' }]).success,
@@ -562,6 +588,15 @@ describe('Strategy fetch adapters', () => {
                 '* * * * *',
                 fakeResolver(),
             ),
+            new IodaEventsStrategy(
+                'https://ioda.test/v2/outages/events',
+                '* * * * *',
+            ),
+            new IodaReportsStrategy(
+                'https://ioda.test/v2',
+                '* * * * *',
+                fakeResolver(),
+            ),
         ];
         for (const strategy of simpleStrategies) {
             await withFetch(
@@ -588,6 +623,115 @@ describe('Strategy fetch adapters', () => {
                         fakeResolver(),
                     ).fetch(),
                     /Fetch failed with status code 500: measurement error/,
+                );
+            },
+        );
+    });
+
+    it('fetches IODA signal series with the fixed 24h window and rejects envelope errors', async () => {
+        const fixedNow = new Date('2026-11-13T12:00:00Z');
+        const expectedUntil = Math.floor(fixedNow.getTime() / 1000);
+        const expectedFrom = expectedUntil - 86_400;
+        const series = {
+            entityType: 'country',
+            entityCode: 'MK',
+            entityName: 'North Macedonia',
+            datasource: 'bgp',
+            from: expectedFrom,
+            until: expectedUntil,
+            step: 300,
+            values: [100, 90],
+        };
+        const eventsStrategy = new IodaEventsStrategy(
+            'https://ioda.test/v2',
+            '*/10 * * * *',
+            () => fixedNow,
+        );
+        const eventUrls: URL[] = [];
+        await withFetch(
+            async (input) => {
+                const url = new URL(String(input));
+                eventUrls.push(url);
+                return jsonResponse({ error: null, data: [[series]] });
+            },
+            async () => {
+                const result = await eventsStrategy.fetch();
+                assert.equal(result.countrySeries.length, 2);
+                assert.equal(result.asnSeries.length, 2);
+            },
+        );
+        assert.equal(eventUrls.length, 4);
+        assert.equal(at(eventUrls, 0).pathname, '/v2/signals/raw/country/MK');
+        assert.equal(at(eventUrls, 1).pathname, '/v2/signals/raw/country/MK');
+        assert.equal(at(eventUrls, 2).pathname, at(eventUrls, 3).pathname);
+        assert.ok(
+            at(eventUrls, 2).pathname.startsWith(
+                '/v2/signals/raw/asn/6821,16333',
+            ),
+        );
+        for (const url of eventUrls) {
+            assert.equal(url.searchParams.get('from'), String(expectedFrom));
+            assert.equal(url.searchParams.get('until'), String(expectedUntil));
+            assert.ok(
+                ['bgp', 'ping-slash24'].includes(
+                    url.searchParams.get('datasource') ?? '',
+                ),
+            );
+        }
+        assert.equal(eventUrls[0]?.searchParams.get('datasource'), 'bgp');
+        assert.equal(
+            eventUrls[1]?.searchParams.get('datasource'),
+            'ping-slash24',
+        );
+
+        const reportsStrategy = new IodaReportsStrategy(
+            'https://ioda.test/v2',
+            '*/10 * * * *',
+            fakeResolver(),
+            () => fixedNow,
+        );
+        const reportUrls: URL[] = [];
+        await withFetch(
+            async (input) => {
+                reportUrls.push(new URL(String(input)));
+                return jsonResponse({
+                    error: null,
+                    data: [
+                        [
+                            {
+                                ...series,
+                                entityType: 'region',
+                                entityCode: '2602',
+                            },
+                        ],
+                    ],
+                });
+            },
+            async () => {
+                const result = await reportsStrategy.fetch();
+                assert.equal(result.length, 2);
+            },
+        );
+        assert.equal(reportUrls.length, 2);
+        assert.ok(
+            reportUrls.every((url) =>
+                url.pathname.includes('/signals/raw/region/'),
+            ),
+        );
+        assert.ok(reportUrls.every((url) => url.pathname.includes('2586')));
+        assert.ok(
+            reportUrls.every(
+                (url) => url.searchParams.get('from') === String(expectedFrom),
+            ),
+        );
+
+        await withFetch(
+            async () =>
+                jsonResponse({ error: 'invalid parameters', data: null }),
+            async () => {
+                await assert.rejects(
+                    reportsStrategy.fetch(),
+                    /IODA request failed: invalid parameters/,
                 );
             },
         );

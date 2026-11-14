@@ -42,6 +42,42 @@ function createResolverDb() {
             nameEn: 'Gazi Baba Center',
             regionCode: 'MK008',
         },
+        {
+            code: 'MK0021100',
+            nameMk: 'Штип',
+            nameEn: 'Shtip',
+            regionCode: 'MK002',
+        },
+        {
+            code: 'MK0021000',
+            nameMk: 'Чешиново - Облешево',
+            nameEn: 'Cheshinovo - Obleshevo',
+            regionCode: 'MK002',
+        },
+        {
+            code: 'MK0081600',
+            nameMk: 'Чучер - Сандево',
+            nameEn: 'Chucher - Sandevo',
+            regionCode: 'MK008',
+        },
+        {
+            code: 'MK0041000',
+            nameMk: 'Струмица',
+            nameEn: 'Strumitsa',
+            regionCode: 'MK004',
+        },
+        {
+            code: 'MK0060700',
+            nameMk: 'Маврово и Ростуша',
+            nameEn: 'Mavrovo and Rostusha',
+            regionCode: 'MK006',
+        },
+        {
+            code: 'MK0080906',
+            nameMk: 'Ѓорче Петров',
+            nameEn: 'Gjorche Petrov',
+            regionCode: 'MK008',
+        },
     ];
     let selectCount = 0;
     let coordinateRows: Array<{ code: string; name: string }> = [];
@@ -79,6 +115,13 @@ describe('MunicipalityResolver', () => {
         assert.equal(mock.selectCount, 1);
         assert.equal(resolver.resolveText('Карпош'), 'MK0080907');
         assert.equal(resolver.resolveText('karposh'), 'MK0080907');
+        assert.equal(resolver.resolveText('Štip'), 'MK0021100');
+        assert.equal(resolver.resolveText('Češinovo-Obleševo'), 'MK0021000');
+        assert.equal(resolver.resolveText('Cucer Sandevo'), 'MK0081600');
+        assert.equal(resolver.resolveText('Strumica'), 'MK0041000');
+        assert.equal(resolver.resolveText('Mavrovo and Rostusa'), 'MK0060700');
+        assert.equal(resolver.resolveText('Ǵorče Petrov'), 'MK0080906');
+        assert.equal(resolver.resolveText('Gjorce Petrov'), 'MK0080906');
         assert.equal(resolver.resolveText('АЕРОДРОМ - ГАЗИ БАБА'), 'MK0080904');
         assert.equal(
             resolver.resolveText('адреса кај Гази Баба Центар'),
@@ -91,6 +134,8 @@ describe('MunicipalityResolver', () => {
             { code: 'MK0080907', nameMk: 'Карпош' },
             { code: 'MK0080904', nameMk: 'Гази Баба' },
             { code: 'MK0080999', nameMk: 'Гази Баба Центар' },
+            { code: 'MK0081600', nameMk: 'Чучер - Сандево' },
+            { code: 'MK0080906', nameMk: 'Ѓорче Петров' },
         ]);
         assert.deepEqual(resolver.resolveRegion('unknown'), []);
     });
@@ -270,6 +315,7 @@ describe('Alerting', () => {
                 'wildfire',
                 'air_quality',
                 'earthquake',
+                'internet',
             ];
             const statuses = ['ongoing', 'scheduled', 'ended', 'unknown'];
             const expectedEmoji = [
@@ -282,6 +328,7 @@ describe('Alerting', () => {
                 '🔥',
                 '💨',
                 '🌍',
+                '🌐',
             ];
             const expectedColor = [0xe74c3c, 0xf39c12, 0x2ecc71, 0x95a5a6];
             const items = categories.map((category, index) =>
