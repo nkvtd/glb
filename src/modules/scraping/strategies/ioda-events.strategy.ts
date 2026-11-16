@@ -121,11 +121,15 @@ function availabilityPct(
     const ratio =
         hasBgp && hasPing
             ? Math.min(1, bgp.ratio) * 0.7 + Math.min(1, ping.ratio) * 0.3
-            : bgp !== null
+            : hasBgp
               ? Math.min(1, bgp.ratio)
-              : ping !== null
+              : hasPing
                 ? Math.min(1, ping.ratio)
-                : 0;
+                : bgp !== null
+                  ? Math.min(1, bgp.ratio)
+                  : ping !== null
+                    ? Math.min(1, ping.ratio)
+                    : 0;
     return Math.max(0, Math.min(100, Number((ratio * 100).toFixed(1))));
 }
 
@@ -346,10 +350,10 @@ export class IodaEventsStrategy
             const op = affected[0];
             if (!op) throw new Error('Expected one affected operator');
             title = `Прекин на интернет мрежата: ${op.name}`;
-            description = `Национален прекин во интернет мрежата на ${op.name} (${fmtPct(op.availabilityPct)} достапност).`;
+            description = `Прекин во интернет мрежата на ${op.name} (${fmtPct(op.availabilityPct)} достапност).`;
         } else {
             title = 'Прекин кај интернет операторите';
-            description = `Национален прекин во интернет мрежата кај: ${affectedList}.`;
+            description = `Прекин во интернет мрежата кај: ${affectedList}.`;
         }
 
         const observedAt = this.now();

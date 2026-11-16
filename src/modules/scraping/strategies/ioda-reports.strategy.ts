@@ -106,11 +106,15 @@ function getAvailabilityPct(
     const ratio =
         hasBgp && hasPing
             ? Math.min(1, bgp.ratio) * 0.7 + Math.min(1, ping.ratio) * 0.3
-            : bgp !== null
+            : hasBgp
               ? Math.min(1, bgp.ratio)
-              : ping !== null
+              : hasPing
                 ? Math.min(1, ping.ratio)
-                : 0;
+                : bgp !== null
+                  ? Math.min(1, bgp.ratio)
+                  : ping !== null
+                    ? Math.min(1, ping.ratio)
+                    : 0;
     return Math.max(0, Math.min(100, Number((ratio * 100).toFixed(1))));
 }
 
