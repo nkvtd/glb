@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import type { EvnReportInsert } from '../../../core/types/evn.js';
 import {
     type EvnItem,
@@ -6,6 +5,10 @@ import {
 } from '../../../core/validation/evn.js';
 import type { MunicipalityResolver } from '../resolver.js';
 import type { ScrapingStrategy } from '../strategy.interface.js';
+import { fetchJson } from './util/fetch.js';
+import { hashExternalId } from './util/hash.js';
+import { ensurePeriod, toTitleCase } from './util/text.js';
+import { deriveLifecycleStatus } from './util/time.js';
 
 export class EvnStrategy
     implements ScrapingStrategy<EvnItem[], EvnReportInsert>
@@ -24,20 +27,7 @@ export class EvnStrategy
     }
 
     async fetch(): Promise<EvnItem[]> {
-        const response = await fetch(this.url, {
-            signal: AbortSignal.timeout(15_000),
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(
-                `Fetch failed with status code ${response.status}: ${errorText}`,
-            );
-        }
-
-        const data = await response.json();
-
-        return evnResponseSchema.parse(data);
+        return fetchJson(this.url, evnResponseSchema);
     }
 
     async parse(items: EvnItem[]): Promise<EvnReportInsert[]> {
@@ -49,35 +39,26 @@ export class EvnStrategy
             const type = item.tipPrekin.trim();
             const voltageLevel = item.napNivo.trim();
 
-            const externalId = createHash('sha256')
-                .update(
-                    `${item.kecId}|${type}|${place}|${address}|${item.pocetok.toISOString()}|${item.kraj.toISOString()}|${voltageLevel}`,
-                )
-                .digest('hex')
-                .slice(0, 32);
-
             const endsAt = item.kraj > item.pocetok ? item.kraj : null;
-
-            const status =
-                now < item.pocetok
-                    ? 'scheduled'
-                    : !endsAt || now <= endsAt
-                      ? 'ongoing'
-                      : 'ended';
+            const status = deriveLifecycleStatus(now, item.pocetok, endsAt);
 
             const locationLabel = this.formatLocation(place);
-            const description = this.formatDescription(address);
-            const code =
-                this.resolver.resolveText(locationLabel) ??
-                this.resolver.resolveText(place);
 
             return {
-                externalId,
+                externalId: this.buildExternalId(
+                    item,
+                    type,
+                    place,
+                    address,
+                    voltageLevel,
+                ),
                 source: this.source,
                 category: this.category,
-                title: `${type}: ${locationLabel}`,
-                description: description,
-                municipalityCode: code,
+                title: this.formatTitle(type, locationLabel),
+                description: this.formatDescription(address),
+                municipalityCode:
+                    this.resolver.resolveText(locationLabel) ??
+                    this.resolver.resolveText(place),
                 locationLabel: locationLabel,
                 status: status,
                 observedAt: now,
@@ -97,6 +78,28 @@ export class EvnStrategy
         });
     }
 
+    private buildExternalId(
+        item: EvnItem,
+        type: string,
+        place: string,
+        address: string,
+        voltageLevel: string,
+    ): string {
+        return hashExternalId(
+            item.kecId,
+            type,
+            place,
+            address,
+            item.pocetok.toISOString(),
+            item.kraj.toISOString(),
+            voltageLevel,
+        );
+    }
+
+    private formatTitle(type: string, locationLabel: string): string {
+        return `${type}: ${locationLabel}`;
+    }
+
     private formatLocation(raw: string): string {
         const withoutParens = raw.replace(/\s*\([^)]+\)\s*$/, '').trim();
 
@@ -108,10 +111,10 @@ export class EvnStrategy
         const [, rawMunicipality, rawSettlementPart] = match ?? [];
 
         if (!rawMunicipality || !rawSettlementPart) {
-            return this.toTitleCase(withoutParens.replace(/\s*-\s*/g, '-'));
+            return toTitleCase(withoutParens.replace(/\s*-\s*/g, '-'));
         }
 
-        const municipality = this.toTitleCase(
+        const municipality = toTitleCase(
             rawMunicipality.replace(/\s*-\s*/g, '-').trim(),
         );
 
@@ -120,7 +123,7 @@ export class EvnStrategy
             .replace(/\s*-\s*/g, ' / ')
             .trim();
 
-        const settlement = this.toTitleCase(rawSettlement);
+        const settlement = toTitleCase(rawSettlement);
 
         if (!settlement || settlement === municipality) {
             return municipality;
@@ -130,11 +133,12 @@ export class EvnStrategy
     }
 
     private formatDescription(raw: string): string {
-        const cleaned = raw
-            .replace(/,(?!\s|\d)/g, ', ')
-            .replace(/\s+/g, ' ')
-            .replace(/\.+$/, '')
-            .trim();
+        const cleaned = ensurePeriod(
+            raw
+                .replace(/,(?!\s|\d)/g, ', ')
+                .replace(/\s+/g, ' ')
+                .trim(),
+        );
 
         const isProse =
             /^(поради|заради|технички|потребно|ќе останат|потрошувачите|корисниците|без |прекини|во )/iu.test(
@@ -142,16 +146,7 @@ export class EvnStrategy
             );
 
         return isProse
-            ? `${cleaned}.`
-            : `Без електрична енергија ќе останат корисниците во: ${cleaned}.`;
-    }
-
-    private toTitleCase(text: string): string {
-        return text
-            .toLowerCase()
-            .replace(
-                /\p{L}+/gu,
-                (word) => word.charAt(0).toUpperCase() + word.slice(1),
-            );
+            ? cleaned
+            : `Без електрична енергија ќе останат корисниците во: ${cleaned}`;
     }
 }

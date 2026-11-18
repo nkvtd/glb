@@ -1,17 +1,19 @@
-import { createHash } from 'node:crypto';
 import type { VodovodKumanovoReportInsert } from '../../../core/types/vodovod-kumanovo.js';
 import {
     type VodovodKumanovoItem,
     vodovodKumanovoResponseSchema,
 } from '../../../core/validation/vodovod-kumanovo.js';
 import type { ScrapingStrategy } from '../strategy.interface.js';
+import { BROWSER_JSON_HEADERS, fetchJson } from './util/fetch.js';
+import { hashExternalId } from './util/hash.js';
+import { capitalizeFirst, decodeHtmlText, ensurePeriod } from './util/text.js';
+import {
+    buildLocalWindow,
+    deriveLifecycleStatus,
+    extractIsoDay,
+} from './util/time.js';
 
 const KUMANOVO_MUNICIPALITY_CODE = 'MK0070300';
-
-const SKOPJE_OFFSET_FORMATTER = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'Europe/Skopje',
-    timeZoneName: 'longOffset',
-});
 
 const ACTION_START_RE =
     /^(?:дефект|чистење|испитување|проверка|теренска|замена|сервисирање|корекција|кодекција|затрпување|периодична|прекин|монтажа|изместување|приклучување|нивелирање|хиперхлорирање|поправка|водоснабдувањето|на\s+ден)(?=$|\s|[,.–—:;()])/iu;
@@ -41,25 +43,9 @@ export class VodovodKumanovoStrategy
     }
 
     async fetch(): Promise<VodovodKumanovoItem[]> {
-        const response = await fetch(this.url, {
-            headers: {
-                Accept: 'application/json',
-                'User-Agent':
-                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-            },
-            signal: AbortSignal.timeout(15_000),
+        return fetchJson(this.url, vodovodKumanovoResponseSchema, {
+            headers: { ...BROWSER_JSON_HEADERS },
         });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(
-                `Fetch failed with status code ${response.status}: ${errorText}`,
-            );
-        }
-
-        const data = await response.json();
-
-        return vodovodKumanovoResponseSchema.parse(data);
     }
 
     async parse(
@@ -69,21 +55,19 @@ export class VodovodKumanovoStrategy
         const results: VodovodKumanovoReportInsert[] = [];
 
         for (const post of posts) {
-            const bounds = this.parseSkopjeDayBounds(post.date);
+            const day = extractIsoDay(post.date);
+            if (!day) continue;
+
+            const bounds = buildLocalWindow(day, 0, 0, 23, 59, 59, 999);
             if (!bounds) continue;
 
             const { startsAt, endsAt } = bounds;
             const rawItems = this.extractItems(post.content.rendered);
             if (rawItems.length === 0) continue;
 
-            const status =
-                now < startsAt
-                    ? 'scheduled'
-                    : now <= endsAt
-                      ? 'ongoing'
-                      : 'ended';
+            const status = deriveLifecycleStatus(now, startsAt, endsAt);
 
-            const postTitle = this.cleanText(post.title.rendered);
+            const postTitle = decodeHtmlText(post.title.rendered);
             const postDate = post.date.trim();
             const postLink = post.link.trim();
 
@@ -93,31 +77,23 @@ export class VodovodKumanovoStrategy
                     .trim()
                     .toLowerCase();
 
-                const externalId = createHash('sha256')
-                    .update(`${post.id}|${normalizedKey}`)
-                    .digest('hex')
-                    .slice(0, 32);
-
                 const { location, detail } =
                     this.splitLocationAndDetail(rawItem);
 
                 const locationLabel = this.formatLocationLabel(location);
                 const isDefect =
                     DEFECT_KEYWORDS_RE.test(rawItem) || detail === null;
-                const titlePrefix = isDefect ? 'Дефект' : 'Интервенција';
-                const title = `${titlePrefix}: ${location ?? 'Куманово'}`;
-                const description = this.formatDescription(
-                    location,
-                    detail,
-                    rawItem,
-                );
 
                 results.push({
-                    externalId,
+                    externalId: this.buildExternalId(post.id, normalizedKey),
                     source: this.source,
                     category: this.category,
-                    title,
-                    description,
+                    title: this.formatTitle(isDefect, location),
+                    description: this.formatDescription(
+                        location,
+                        detail,
+                        rawItem,
+                    ),
                     municipalityCode: KUMANOVO_MUNICIPALITY_CODE,
                     locationLabel,
                     status,
@@ -139,6 +115,14 @@ export class VodovodKumanovoStrategy
         return results;
     }
 
+    private buildExternalId(postId: number, normalizedKey: string): string {
+        return hashExternalId(postId, normalizedKey);
+    }
+
+    private formatTitle(isDefect: boolean, location: string | null): string {
+        return `${isDefect ? 'Дефект' : 'Интервенција'}: ${location ?? 'Куманово'}`;
+    }
+
     private extractItems(html: string): string[] {
         const liMatches = Array.from(
             html.matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi),
@@ -157,7 +141,7 @@ export class VodovodKumanovoStrategy
         const items: string[] = [];
 
         for (const candidate of candidates) {
-            const cleaned = this.cleanText(candidate)
+            const cleaned = decodeHtmlText(candidate)
                 .replace(/^[-–—•*]+\s*/u, '')
                 .trim();
 
@@ -241,77 +225,9 @@ export class VodovodKumanovoStrategy
         rawItem: string,
     ): string {
         if (location && detail && detail !== rawItem) {
-            const cleanDetail = detail.replace(/\.+$/, '').trim();
-            return `${location} – ${cleanDetail}.`;
+            return `${location} – ${ensurePeriod(detail)}`;
         }
 
-        const stripped = rawItem.replace(/\.+$/, '').trim();
-        const capitalized =
-            stripped.charAt(0).toUpperCase() + stripped.slice(1);
-
-        return `${capitalized}.`;
-    }
-
-    private parseSkopjeDayBounds(
-        rawDate: string,
-    ): { startsAt: Date; endsAt: Date } | null {
-        const match = rawDate.trim().match(/^(\d{4}-\d{2}-\d{2})/);
-        if (!match?.[1]) return null;
-
-        const day = match[1];
-        const startProbe = new Date(`${day}T00:00:00Z`);
-        const endProbe = new Date(`${day}T21:00:00Z`);
-
-        if (
-            Number.isNaN(startProbe.getTime()) ||
-            Number.isNaN(endProbe.getTime())
-        ) {
-            return null;
-        }
-
-        const startOffset = this.getSkopjeOffset(startProbe);
-        const endOffset = this.getSkopjeOffset(endProbe);
-
-        const startsAt = new Date(`${day}T00:00:00.000${startOffset}`);
-        const endsAt = new Date(`${day}T23:59:59.999${endOffset}`);
-
-        if (
-            Number.isNaN(startsAt.getTime()) ||
-            Number.isNaN(endsAt.getTime())
-        ) {
-            return null;
-        }
-
-        return { startsAt, endsAt };
-    }
-
-    private getSkopjeOffset(utcProbe: Date): string {
-        const tzPart =
-            SKOPJE_OFFSET_FORMATTER.formatToParts(utcProbe).find(
-                (p) => p.type === 'timeZoneName',
-            )?.value ?? 'GMT+01:00';
-
-        const offset = tzPart.replace('GMT', '');
-        return /^[+-]\d{2}:\d{2}$/.test(offset) ? offset : '+01:00';
-    }
-
-    private cleanText(raw: string): string {
-        return raw
-            .replace(/<[^>]+>/g, ' ')
-            .replace(/&#8211;|&ndash;/gi, '–')
-            .replace(/&#8212;|&mdash;/gi, '—')
-            .replace(/&nbsp;|&#160;/gi, ' ')
-            .replace(/&amp;|&#038;/gi, '&')
-            .replace(/&quot;|&#8220;|&#8221;|&ldquo;|&rdquo;/gi, '"')
-            .replace(/&#8216;|&#8217;|&lsquo;|&rsquo;/gi, "'")
-            .replace(/&hellip;|&#8230;/gi, '...')
-            .replace(/&lt;|&#60;/gi, '<')
-            .replace(/&gt;|&#62;/gi, '>')
-            .replace(/\(\s+/g, '(')
-            .replace(/\s+\)/g, ')')
-            .replace(/\s+,/g, ',')
-            .replace(/,(?!\s|\d)/g, ', ')
-            .replace(/\s+/g, ' ')
-            .trim();
+        return capitalizeFirst(ensurePeriod(rawItem));
     }
 }

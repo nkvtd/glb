@@ -8,6 +8,15 @@ import {
 } from '../../../core/validation/sensor-community.js';
 import type { MunicipalityResolver } from '../resolver.js';
 import type { ScrapingStrategy } from '../strategy.interface.js';
+import {
+    getAirQualityAdjective,
+    getAirQualityTitlePrefix,
+    POOR_AIR_INDEX_CODES,
+} from './util/air-quality.js';
+import { fetchJson } from './util/fetch.js';
+import { formatEwktPoint } from './util/geo.js';
+import { mean, trimmedMean } from './util/math.js';
+import { floorToUtcHourIso } from './util/time.js';
 
 type StationAccumulator = {
     locationId: number;
@@ -20,8 +29,6 @@ type StationAccumulator = {
     humidityValues: number[];
     pressureHpaValues: number[];
 };
-
-const POOR_AIR_CODES = new Set(['04', '05', '06']);
 
 export class SensorCommunityStrategy
     implements
@@ -42,20 +49,9 @@ export class SensorCommunityStrategy
     }
 
     async fetch(): Promise<SensorCommunityItem[]> {
-        const response = await fetch(this.url, {
-            signal: AbortSignal.timeout(20_000),
+        return fetchJson(this.url, sensorCommunityResponseSchema, {
+            timeoutMs: 20_000,
         });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(
-                `Fetch failed with status code ${response.status}: ${errorText}`,
-            );
-        }
-
-        const data = await response.json();
-
-        return sensorCommunityResponseSchema.parse(data);
     }
 
     async parse(
@@ -162,16 +158,16 @@ export class SensorCommunityStrategy
         >();
 
         for (const acc of stationsById.values()) {
-            const humidityMean = this.mean(acc.humidityValues);
+            const humidityMean = mean(acc.humidityValues);
 
             const pm10 =
                 humidityMean !== null && humidityMean >= 90
                     ? null
-                    : this.mean(acc.pm10Values);
+                    : mean(acc.pm10Values);
             const pm25 =
                 humidityMean !== null && humidityMean >= 90
                     ? null
-                    : this.mean(acc.pm25Values);
+                    : mean(acc.pm25Values);
 
             if (pm10 === null && pm25 === null) continue;
 
@@ -195,9 +191,7 @@ export class SensorCommunityStrategy
                 pm25: pm25 !== null ? Number(pm25.toFixed(1)) : null,
                 temperature:
                     acc.tempValues.length > 0
-                        ? Number(
-                              (this.mean(acc.tempValues) as number).toFixed(1),
-                          )
+                        ? Number((mean(acc.tempValues) as number).toFixed(1))
                         : null,
                 humidity:
                     humidityMean !== null
@@ -206,9 +200,9 @@ export class SensorCommunityStrategy
                 pressureHpa:
                     acc.pressureHpaValues.length > 0
                         ? Number(
-                              (
-                                  this.mean(acc.pressureHpaValues) as number
-                              ).toFixed(1),
+                              (mean(acc.pressureHpaValues) as number).toFixed(
+                                  1,
+                              ),
                           )
                         : null,
             };
@@ -248,51 +242,46 @@ export class SensorCommunityStrategy
                 .filter((v): v is number => v !== null);
 
             const avgPm10 = Number(
-                (this.trimmedMean(pm10List) as number).toFixed(1),
+                (trimmedMean(pm10List) as number).toFixed(1),
             );
             const avgPm25 =
                 pm25List.length > 0
-                    ? Number((this.trimmedMean(pm25List) as number).toFixed(1))
+                    ? Number((trimmedMean(pm25List) as number).toFixed(1))
                     : null;
             const avgTemp =
                 tempList.length > 0
-                    ? Number((this.trimmedMean(tempList) as number).toFixed(1))
+                    ? Number((trimmedMean(tempList) as number).toFixed(1))
                     : null;
             const avgHumidity =
                 humidityList.length > 0
-                    ? Number(
-                          (this.trimmedMean(humidityList) as number).toFixed(1),
-                      )
+                    ? Number((trimmedMean(humidityList) as number).toFixed(1))
                     : null;
             const avgPressure =
                 pressureList.length > 0
-                    ? Number(
-                          (this.trimmedMean(pressureList) as number).toFixed(1),
-                      )
+                    ? Number((trimmedMean(pressureList) as number).toFixed(1))
                     : null;
 
             const centroidLng = Number(
                 (
-                    this.mean(group.stations.map((s) => s.longitude)) as number
+                    mean(group.stations.map((s) => s.longitude)) as number
                 ).toFixed(6),
             );
             const centroidLat = Number(
-                (
-                    this.mean(group.stations.map((s) => s.latitude)) as number
-                ).toFixed(6),
+                (mean(group.stations.map((s) => s.latitude)) as number).toFixed(
+                    6,
+                ),
             );
 
             const classificationCode = this.classifyAirQuality(
                 avgPm10,
                 avgPm25,
             );
-            const isPoor = POOR_AIR_CODES.has(classificationCode);
+            const isPoor = POOR_AIR_INDEX_CODES.has(classificationCode);
 
             const startsAt = new Date(group.latestTimestampMs);
-            const hourWindowUtc = `${startsAt.toISOString().slice(0, 13)}:00:00Z`;
+            const hourWindowUtc = floorToUtcHourIso(startsAt);
 
             const locationLabel = group.municipalityName;
-            const title = `${this.formatTitlePrefix(classificationCode)}: ${locationLabel}`;
             const description = this.formatDescription({
                 municipalityName: locationLabel,
                 stationCount: group.stations.length,
@@ -304,14 +293,17 @@ export class SensorCommunityStrategy
             });
 
             reports.push({
-                externalId: `${municipalityCode}-${hourWindowUtc}`,
+                externalId: this.buildExternalId(
+                    municipalityCode,
+                    hourWindowUtc,
+                ),
                 source: this.source,
                 category: this.category,
-                title,
+                title: this.formatTitle(classificationCode, locationLabel),
                 description,
                 municipalityCode,
                 locationLabel,
-                geom: `SRID=4326;POINT(${centroidLng} ${centroidLat})`,
+                geom: formatEwktPoint(centroidLng, centroidLat),
                 status: isPoor ? 'ongoing' : 'omitted',
                 observedAt: now,
                 startsAt,
@@ -338,24 +330,18 @@ export class SensorCommunityStrategy
         return reports;
     }
 
-    private mean(values: number[]): number | null {
-        if (values.length === 0) return null;
-        let sum = 0;
-        for (const v of values) {
-            sum += v;
-        }
-        return sum / values.length;
+    private buildExternalId(
+        municipalityCode: string,
+        hourWindowUtc: string,
+    ): string {
+        return `${municipalityCode}-${hourWindowUtc}`;
     }
 
-    private trimmedMean(values: number[]): number | null {
-        if (values.length === 0) return null;
-        if (values.length < 4) return this.mean(values);
-
-        const sorted = [...values].sort((a, b) => a - b);
-        const trimCount = Math.max(1, Math.floor(sorted.length * 0.2));
-        const sliced = sorted.slice(trimCount, sorted.length - trimCount);
-
-        return this.mean(sliced);
+    private formatTitle(
+        classificationCode: string,
+        locationLabel: string,
+    ): string {
+        return `${getAirQualityTitlePrefix(classificationCode, 'Квалитет на воздух')}: ${locationLabel}`;
     }
 
     private classifyAirQuality(pm10: number, pm25: number | null): string {
@@ -384,44 +370,6 @@ export class SensorCommunityStrategy
         return 6;
     }
 
-    private formatTitlePrefix(code: string): string {
-        switch (code) {
-            case '01':
-                return 'Добар квалитет на воздух';
-            case '02':
-                return 'Прифатлив квалитет на воздух';
-            case '03':
-                return 'Умерен квалитет на воздух';
-            case '04':
-                return 'Лош квалитет на воздух';
-            case '05':
-                return 'Многу лош квалитет на воздух';
-            case '06':
-                return 'Екстремно лош квалитет на воздух';
-            default:
-                return 'Квалитет на воздух';
-        }
-    }
-
-    private getClassificationAdjective(code: string): string {
-        switch (code) {
-            case '01':
-                return 'добар';
-            case '02':
-                return 'прифатлив';
-            case '03':
-                return 'умерен';
-            case '04':
-                return 'лош';
-            case '05':
-                return 'многу лош';
-            case '06':
-                return 'екстремно лош';
-            default:
-                return 'просечен';
-        }
-    }
-
     private formatDescription(params: {
         municipalityName: string;
         stationCount: number;
@@ -431,21 +379,20 @@ export class SensorCommunityStrategy
         temperature: number | null;
         humidity: number | null;
     }): string {
-        const adjective = this.getClassificationAdjective(
-            params.classificationCode,
-        );
+        const adjective =
+            getAirQualityAdjective(params.classificationCode) ?? 'просечен';
 
         const firstSentence = `Според приватните мерни станици во ${params.municipalityName} (${params.stationCount === 1 ? '1 активна мерна станица' : `${params.stationCount} активни мерни станици`}) е измерен ${adjective} квалитет на воздухот.`;
 
-        const pm10Level = this.getClassificationAdjective(
-            `0${this.classifyPm10(params.pm10)}`,
-        );
+        const pm10Level =
+            getAirQualityAdjective(`0${this.classifyPm10(params.pm10)}`) ??
+            'просечен';
         const pollutants = [`PM10 од ${params.pm10} µg/m³ (${pm10Level})`];
 
         if (params.pm25 !== null) {
-            const pm25Level = this.getClassificationAdjective(
-                `0${this.classifyPm25(params.pm25)}`,
-            );
+            const pm25Level =
+                getAirQualityAdjective(`0${this.classifyPm25(params.pm25)}`) ??
+                'просечен';
             pollutants.push(`PM2.5 од ${params.pm25} µg/m³ (${pm25Level})`);
         }
 

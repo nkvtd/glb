@@ -9,6 +9,15 @@ import {
 } from '../../../core/validation/ioda.js';
 import type { MunicipalityResolver } from '../resolver.js';
 import type { ScrapingStrategy } from '../strategy.interface.js';
+import { fetchJson } from './util/fetch.js';
+import {
+    computeIodaAvailabilityPct,
+    flattenIodaSignals,
+    latestIodaTimestamp,
+    metricForIodaSeries,
+} from './util/ioda.js';
+import { formatPercentComma } from './util/text.js';
+import { floorToUtcHourIso } from './util/time.js';
 
 const WINDOW_SECONDS = 86_400;
 const IGNORED_REGION_CODES = new Set(['2592', '4870']);
@@ -29,124 +38,7 @@ const REGION_NAME_OVERRIDES: Readonly<Record<string, string>> = {
 
 export type IodaReportsRaw = IodaSignalSeries[];
 
-function median(values: number[]): number {
-    const sorted = [...values].sort((a, b) => a - b);
-    const middle = Math.floor(sorted.length / 2);
-    const result =
-        sorted.length % 2
-            ? (sorted[middle] ?? 0)
-            : ((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2;
-    return Number(result.toFixed(1));
-}
-
-function metricForSeries(series: IodaSignalSeries[]): IodaSignalMetric | null {
-    let current = 0;
-    let baseline = 0;
-    let found = false;
-    for (const item of series) {
-        const values = item.values.filter(
-            (value): value is number =>
-                value !== null &&
-                value !== undefined &&
-                Number.isFinite(value) &&
-                value >= 0,
-        );
-        if (!values.length) continue;
-        const itemBaseline = median(values);
-        if (itemBaseline <= 0) continue;
-        for (let index = item.values.length - 1; index >= 0; index--) {
-            const value = item.values[index];
-            if (
-                value !== null &&
-                value !== undefined &&
-                Number.isFinite(value) &&
-                value >= 0
-            ) {
-                current += value;
-                baseline += itemBaseline;
-                found = true;
-                break;
-            }
-        }
-    }
-    if (!found || baseline <= 0) return null;
-    baseline = Number(baseline.toFixed(1));
-    return {
-        current,
-        baseline,
-        ratio: Number((current / baseline).toFixed(4)),
-    };
-}
-
-function classify(
-    bgp: IodaSignalMetric | null,
-    ping: IodaSignalMetric | null,
-): 'normal' | 'degraded' | 'outage' {
-    const hasBgp = bgp !== null && bgp.baseline >= 5;
-    const hasPing = ping !== null && ping.baseline >= 10;
-    if (
-        (bgp !== null && bgp.baseline >= 2 && bgp.current === 0) ||
-        (hasBgp && bgp.ratio < 0.75) ||
-        (hasBgp && hasPing && bgp.ratio < 0.9 && ping.ratio < 0.65) ||
-        (!hasBgp && hasPing && ping.ratio < 0.5)
-    )
-        return 'outage';
-    if ((hasBgp && bgp.ratio < 0.9) || (hasPing && ping.ratio < 0.75)) {
-        return 'degraded';
-    }
-    return 'normal';
-}
-
-function getAvailabilityPct(
-    bgp: IodaSignalMetric | null,
-    ping: IodaSignalMetric | null,
-): number {
-    const hasBgp = bgp !== null && bgp.baseline >= 5;
-    const hasPing = ping !== null && ping.baseline >= 10;
-    const ratio =
-        hasBgp && hasPing
-            ? Math.min(1, bgp.ratio) * 0.7 + Math.min(1, ping.ratio) * 0.3
-            : hasBgp
-              ? Math.min(1, bgp.ratio)
-              : hasPing
-                ? Math.min(1, ping.ratio)
-                : bgp !== null
-                  ? Math.min(1, bgp.ratio)
-                  : ping !== null
-                    ? Math.min(1, ping.ratio)
-                    : 0;
-    return Math.max(0, Math.min(100, Number((ratio * 100).toFixed(1))));
-}
-
-function fmtPct(value: number): string {
-    return `${Number.isInteger(value) ? value : value.toFixed(1).replace('.', ',')}%`;
-}
-
-function flattenResponse(value: unknown): IodaSignalSeries[] {
-    const body = iodaSignalsResponseSchema.parse(value);
-    if (body.error !== null)
-        throw new Error(`IODA request failed: ${body.error}`);
-    return (body.data ?? []).flat();
-}
-
-function latestTimestamp(series: IodaSignalSeries[]): number {
-    let latest = 0;
-    for (const item of series) {
-        for (let index = item.values.length - 1; index >= 0; index--) {
-            const value = item.values[index];
-            if (
-                value !== null &&
-                value !== undefined &&
-                Number.isFinite(value) &&
-                value >= 0
-            ) {
-                latest = Math.max(latest, item.from + index * item.step);
-                break;
-            }
-        }
-    }
-    return latest;
-}
+type IodaConnectivity = 'normal' | 'degraded' | 'outage';
 
 export class IodaReportsStrategy
     implements ScrapingStrategy<IodaReportsRaw, IodaReportInsert>
@@ -183,24 +75,20 @@ export class IodaReportsStrategy
         )
             .filter((code) => !IGNORED_REGION_CODES.has(code))
             .join(',');
-        const fetchDatasource = async (datasource: string) => {
+        const fetchDatasource = async (
+            datasource: string,
+        ): Promise<IodaSignalSeries[]> => {
             const requestUrl = new URL(
                 `${base}/signals/raw/region/${regionCodes}`,
             );
             requestUrl.searchParams.set('from', String(from));
             requestUrl.searchParams.set('until', String(until));
             requestUrl.searchParams.set('datasource', datasource);
-            const response = await fetch(requestUrl, {
-                headers: { Accept: 'application/json' },
-                signal: AbortSignal.timeout(15_000),
-            });
-            if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(
-                    `Fetch failed with status code ${response.status}: ${errorText}`,
-                );
-            }
-            return flattenResponse(await response.json());
+            return flattenIodaSignals(
+                await fetchJson(requestUrl, iodaSignalsResponseSchema, {
+                    headers: { Accept: 'application/json' },
+                }),
+            );
         };
         const [bgp, ping] = await Promise.all([
             fetchDatasource('bgp'),
@@ -242,39 +130,23 @@ export class IodaReportsStrategy
         const observedAt = this.now();
         const rows: IodaReportInsert[] = [];
         for (const [municipalityCode, group] of grouped) {
-            const bgp = metricForSeries(
+            const bgp = metricForIodaSeries(
                 group.series.filter((item) => item.datasource === 'bgp'),
             );
-            const ping = metricForSeries(
+            const ping = metricForIodaSeries(
                 group.series.filter(
                     (item) => item.datasource === 'ping-slash24',
                 ),
             );
             if (!bgp && !ping) continue;
-            const connectivityStatus = classify(bgp, ping);
-            const availability = getAvailabilityPct(bgp, ping);
-            const latest = latestTimestamp(group.series);
+            const connectivityStatus = this.classify(bgp, ping);
+            const availability = computeIodaAvailabilityPct(bgp, ping, 5);
+            const latest = latestIodaTimestamp(group.series);
             const startsAt = new Date(
-                (latest || Math.floor(observedAt.getTime() / 1000)) * 1000,
+                (latest ?? Math.floor(observedAt.getTime() / 1000)) * 1000,
             );
-            const hourWindowUtc = `${startsAt.toISOString().slice(0, 13)}:00:00Z`;
-            const externalId =
-                connectivityStatus === 'normal'
-                    ? `${municipalityCode}-${hourWindowUtc}`
-                    : `${municipalityCode}-${hourWindowUtc}-${connectivityStatus}`;
+            const hourWindowUtc = floorToUtcHourIso(startsAt);
             const municipalityName = group.municipalityName;
-            const title =
-                connectivityStatus === 'normal'
-                    ? `Интернет мрежа: ${municipalityName}`
-                    : connectivityStatus === 'degraded'
-                      ? `Отежнат интернет сообраќај: ${municipalityName}`
-                      : `Прекин на интернет: ${municipalityName}`;
-            const description =
-                connectivityStatus === 'normal'
-                    ? `Интернет сообраќајот во ${municipalityName} се одвива нормално (${fmtPct(availability)} достапност).`
-                    : connectivityStatus === 'degraded'
-                      ? `Намалена достапност на интернет мрежата во ${municipalityName} (${fmtPct(availability)} од вообичаениот капацитет).`
-                      : `Прекин во интернет сообраќајот во ${municipalityName} (${fmtPct(availability)} достапност).`;
             const payload: IodaReportPayload = {
                 municipalityCode,
                 municipalityName,
@@ -285,11 +157,19 @@ export class IodaReportsStrategy
                 ping,
             };
             rows.push({
-                externalId,
+                externalId: this.buildExternalId(
+                    municipalityCode,
+                    hourWindowUtc,
+                    connectivityStatus,
+                ),
                 source: this.source,
                 category: this.category,
-                title,
-                description,
+                title: this.formatTitle(connectivityStatus, municipalityName),
+                description: this.formatDescription(
+                    connectivityStatus,
+                    municipalityName,
+                    availability,
+                ),
                 municipalityCode,
                 locationLabel: municipalityName,
                 geom: null,
@@ -301,5 +181,59 @@ export class IodaReportsStrategy
             });
         }
         return rows;
+    }
+
+    private classify(
+        bgp: IodaSignalMetric | null,
+        ping: IodaSignalMetric | null,
+    ): IodaConnectivity {
+        const hasBgp = bgp !== null && bgp.baseline >= 5;
+        const hasPing = ping !== null && ping.baseline >= 10;
+        if (
+            (bgp !== null && bgp.baseline >= 2 && bgp.current === 0) ||
+            (hasBgp && bgp.ratio < 0.75) ||
+            (hasBgp && hasPing && bgp.ratio < 0.9 && ping.ratio < 0.65) ||
+            (!hasBgp && hasPing && ping.ratio < 0.5)
+        )
+            return 'outage';
+        if ((hasBgp && bgp.ratio < 0.9) || (hasPing && ping.ratio < 0.75)) {
+            return 'degraded';
+        }
+        return 'normal';
+    }
+
+    private buildExternalId(
+        municipalityCode: string,
+        hourWindowUtc: string,
+        status: IodaConnectivity,
+    ): string {
+        return status === 'normal'
+            ? `${municipalityCode}-${hourWindowUtc}`
+            : `${municipalityCode}-${hourWindowUtc}-${status}`;
+    }
+
+    private formatTitle(
+        status: IodaConnectivity,
+        municipalityName: string,
+    ): string {
+        if (status === 'normal') {
+            return `Интернет мрежа: ${municipalityName}`;
+        }
+        return status === 'degraded'
+            ? `Отежнат интернет сообраќај: ${municipalityName}`
+            : `Прекин на интернет: ${municipalityName}`;
+    }
+
+    private formatDescription(
+        status: IodaConnectivity,
+        municipalityName: string,
+        availability: number,
+    ): string {
+        if (status === 'normal') {
+            return `Интернет сообраќајот во ${municipalityName} се одвива нормално (${formatPercentComma(availability)} достапност).`;
+        }
+        return status === 'degraded'
+            ? `Намалена достапност на интернет мрежата во ${municipalityName} (${formatPercentComma(availability)} од вообичаениот капацитет).`
+            : `Прекин во интернет сообраќајот во ${municipalityName} (${formatPercentComma(availability)} достапност).`;
     }
 }

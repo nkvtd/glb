@@ -7,18 +7,9 @@ import {
     nbrmRatesResponseSchema,
 } from '../../../core/validation/nbrm-rates.js';
 import type { ScrapingStrategy } from '../strategy.interface.js';
-
-const SKOPJE_DATE_FORMATTER = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Europe/Skopje',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-});
-
-const SKOPJE_OFFSET_FORMATTER = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'Europe/Skopje',
-    timeZoneName: 'longOffset',
-});
+import { fetchJson } from './util/fetch.js';
+import { formatDecimalComma } from './util/text.js';
+import { formatLocalDate, parseLocalMidnight } from './util/time.js';
 
 const MAIN_CURRENCIES = ['EUR', 'USD', 'GBP', 'CHF'];
 const DATUM_DATE_RE = /^(\d{4}-\d{2}-\d{2})/;
@@ -53,7 +44,7 @@ export class NbrmRatesStrategy
 
     async fetch(): Promise<NbrmRateItem[]> {
         const url = new URL(this.url);
-        const todayKey = this.formatSkopjeDate(this.now());
+        const todayKey = formatLocalDate(this.now());
         const endDate = new Date(`${todayKey}T00:00:00Z`);
         const startDate = new Date(endDate);
         startDate.setUTCDate(startDate.getUTCDate() - 10);
@@ -62,37 +53,17 @@ export class NbrmRatesStrategy
         url.searchParams.set('EndDate', this.formatRequestDate(endDate));
         url.searchParams.set('format', 'json');
 
-        const response = await fetch(url, {
+        return fetchJson(url, nbrmRatesResponseSchema, {
             headers: { Accept: 'application/json' },
-            signal: AbortSignal.timeout(15_000),
+            rejectHtml: true,
         });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(
-                `Fetch failed with status code ${response.status}: ${errorText}`,
-            );
-        }
-
-        if (
-            response.headers
-                .get('content-type')
-                ?.toLowerCase()
-                .includes('text/html')
-        ) {
-            const errorText = await response.text();
-            throw new Error(`Fetch returned an HTML error page: ${errorText}`);
-        }
-
-        const data = await response.json();
-        return nbrmRatesResponseSchema.parse(data);
     }
 
     async parse(items: NbrmRateItem[]): Promise<NbrmRatesEventInsert[]> {
         if (items.length === 0) return [];
 
         const now = this.now();
-        const todayKey = this.formatSkopjeDate(now);
+        const todayKey = formatLocalDate(now);
         const groups = new Map<number, NbrmRateGroup>();
 
         for (const item of items) {
@@ -150,26 +121,20 @@ export class NbrmRatesStrategy
         const firstDay = selectedGroup.dates[0];
         if (!firstDay) return [];
         const year = firstDay.slice(0, 4);
-        const startsAt = this.parseSkopjeMidnight(firstDay);
+        const startsAt = parseLocalMidnight(firstDay);
         const mainRates = selectedGroup.rates.filter((rate) =>
             MAIN_CURRENCIES.includes(rate.oznaka.trim().toUpperCase()),
         );
         const ratesForDescription =
             mainRates.length > 0 ? mainRates : selectedGroup.rates.slice(0, 4);
-        const rateDescription = ratesForDescription
-            .map(
-                (rate) =>
-                    `${rate.oznaka} = ${rate.sreden.toFixed(4).replace('.', ',')} ден.`,
-            )
-            .join(', ');
 
         return [
             {
-                externalId: `nbrm-${year}-${selectedGroup.rBr}`,
+                externalId: this.buildExternalId(year, selectedGroup.rBr),
                 source: this.source,
                 category: this.category,
-                title: `Тековна курсна листа`,
-                description: `Актуелни средни курсеви: ${rateDescription}`,
+                title: this.formatTitle(),
+                description: this.formatDescription(ratesForDescription),
                 status: 'ongoing',
                 observedAt: now,
                 startsAt,
@@ -184,12 +149,23 @@ export class NbrmRatesStrategy
         ];
     }
 
-    private formatSkopjeDate(date: Date): string {
-        const parts = SKOPJE_DATE_FORMATTER.formatToParts(date);
-        const year = parts.find((part) => part.type === 'year')?.value ?? '';
-        const month = parts.find((part) => part.type === 'month')?.value ?? '';
-        const day = parts.find((part) => part.type === 'day')?.value ?? '';
-        return `${year}-${month}-${day}`;
+    private buildExternalId(year: string, rBr: number): string {
+        return `nbrm-${year}-${rBr}`;
+    }
+
+    private formatTitle(): string {
+        return 'Тековна курсна листа';
+    }
+
+    private formatDescription(rates: NbrmRateEntry[]): string {
+        const rateDescription = rates
+            .map(
+                (rate) =>
+                    `${rate.oznaka} = ${formatDecimalComma(rate.sreden, 4)} ден.`,
+            )
+            .join(', ');
+
+        return `Актуелни средни курсеви: ${rateDescription}`;
     }
 
     private formatRequestDate(date: Date): string {
@@ -204,18 +180,5 @@ export class NbrmRatesStrategy
             !Number.isNaN(parsed.getTime()) &&
             parsed.toISOString().startsWith(date)
         );
-    }
-
-    private parseSkopjeMidnight(date: string): Date {
-        const probe = new Date(`${date}T00:00:00Z`);
-        const offsetName =
-            SKOPJE_OFFSET_FORMATTER.formatToParts(probe).find(
-                (part) => part.type === 'timeZoneName',
-            )?.value ?? 'GMT+01:00';
-        const offset = offsetName.replace('GMT', '');
-        const normalizedOffset = /^[+-]\d{2}:\d{2}$/.test(offset)
-            ? offset
-            : '+01:00';
-        return new Date(`${date}T00:00:00.000${normalizedOffset}`);
     }
 }

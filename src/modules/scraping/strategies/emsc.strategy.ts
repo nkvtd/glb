@@ -5,6 +5,8 @@ import {
 } from '../../../core/validation/emsc.js';
 import type { MunicipalityResolver } from '../resolver.js';
 import type { ScrapingStrategy } from '../strategy.interface.js';
+import { fetchJsonOrNull } from './util/fetch.js';
+import { formatEwktPoint } from './util/geo.js';
 
 const LOOKBACK_WINDOW_MS = 24 * 60 * 60 * 1000;
 const ACTIVE_WINDOW_MS = 60 * 60 * 1000;
@@ -35,22 +37,11 @@ export class EmscStrategy
             );
         }
 
-        const response = await fetch(requestUrl.toString(), {
-            signal: AbortSignal.timeout(15_000),
-        });
-
-        if (response.status === 204) {
-            return [];
-        }
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(
-                `Fetch failed with status code ${response.status}: ${errorText}`,
-            );
-        }
-
-        return emscResponseSchema.parse(await response.json()).features;
+        const parsed = await fetchJsonOrNull(
+            requestUrl.toString(),
+            emscResponseSchema,
+        );
+        return parsed?.features ?? [];
     }
 
     async parse(items: EmscFeature[]): Promise<EmscReportInsert[]> {
@@ -75,7 +66,6 @@ export class EmscStrategy
             const isRecent =
                 now.getTime() - p.time.getTime() <= ACTIVE_WINDOW_MS;
 
-            const title = `${this.formatTitlePrefix(p.mag)}: ${locationLabel}`;
             const description = this.formatDescription({
                 locationLabel,
                 flynnRegion: p.flynn_region,
@@ -87,14 +77,14 @@ export class EmscStrategy
             });
 
             results.push({
-                externalId: p.unid.trim(),
+                externalId: this.buildExternalId(p.unid),
                 source: this.source,
                 category: this.category,
-                title,
+                title: this.formatTitle(p.mag, locationLabel),
                 description,
                 municipalityCode,
                 locationLabel,
-                geom: `SRID=4326;POINT(${p.lon} ${p.lat})`,
+                geom: formatEwktPoint(p.lon, p.lat),
                 status: isRecent ? 'ongoing' : 'ended',
                 observedAt: now,
                 startsAt: p.time,
@@ -117,6 +107,14 @@ export class EmscStrategy
         }
 
         return results;
+    }
+
+    private buildExternalId(unid: string): string {
+        return unid.trim();
+    }
+
+    private formatTitle(magnitude: number, locationLabel: string): string {
+        return `${this.formatTitlePrefix(magnitude)}: ${locationLabel}`;
     }
 
     private formatTitlePrefix(magnitude: number): string {
@@ -175,12 +173,7 @@ export class EmscStrategy
     }
 
     private formatBorderRegion(flynnRegion: string): string {
-        const upper = flynnRegion.trim().toUpperCase();
-        if (upper.includes('ALBANIA')) return 'Албанија (пограничен регион)';
-        if (upper.includes('GREECE')) return 'Грција (пограничен регион)';
-        if (upper.includes('BULGARIA')) return 'Бугарија (пограничен регион)';
-        if (upper.includes('SERBIA')) return 'Србија (пограничен регион)';
-        if (upper.includes('KOSOVO')) return 'Косово (пограничен регион)';
-        return 'Граничен регион';
+        const country = this.getBorderCountryName(flynnRegion);
+        return country ? `${country} (пограничен регион)` : 'Граничен регион';
     }
 }

@@ -5,6 +5,10 @@ import {
 } from '../../../core/validation/vodovod-skopje.js';
 import type { MunicipalityResolver } from '../resolver.js';
 import type { ScrapingStrategy } from '../strategy.interface.js';
+import { fetchJson } from './util/fetch.js';
+import { formatEwktPoint } from './util/geo.js';
+import { capitalizeFirst, toTitleCase } from './util/text.js';
+import { deriveLifecycleStatus } from './util/time.js';
 
 export class VodovodSkopjeStrategy
     implements
@@ -24,20 +28,9 @@ export class VodovodSkopjeStrategy
     }
 
     async fetch(): Promise<VodovodSkopjeFeature[]> {
-        const response = await fetch(this.url, {
-            signal: AbortSignal.timeout(60_000),
+        const parsed = await fetchJson(this.url, vodovodSkopjeResponseSchema, {
+            timeoutMs: 60_000,
         });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(
-                `Fetch failed with status code ${response.status}: ${errorText}`,
-            );
-        }
-
-        const data = await response.json();
-        const parsed = vodovodSkopjeResponseSchema.parse(data);
-
         return parsed.features;
     }
 
@@ -56,9 +49,9 @@ export class VodovodSkopjeStrategy
                 const rawStreet = a.Ulica.replace(/[“”"]/g, '').trim();
                 const streetNumber = a.adresaBrojDefekt?.trim() || null;
 
-                const municipality = this.toTitleCase(rawMunicipality);
-                const street = this.toTitleCase(rawStreet);
-                const defectType = this.capitalizeFirst(a.vidDefektName.trim());
+                const municipality = toTitleCase(rawMunicipality);
+                const street = toTitleCase(rawStreet);
+                const defectType = capitalizeFirst(a.vidDefektName.trim());
 
                 const streetAddress = [street, streetNumber]
                     .filter(Boolean)
@@ -76,12 +69,10 @@ export class VodovodSkopjeStrategy
                 const endsAt =
                     rawEndsAt && rawEndsAt >= startsAt ? rawEndsAt : null;
 
-                const status =
-                    isClosed || (endsAt !== null && now >= endsAt)
-                        ? 'ended'
-                        : now < startsAt
-                          ? 'scheduled'
-                          : 'ongoing';
+                const status = deriveLifecycleStatus(now, startsAt, endsAt, {
+                    closed: isClosed,
+                    inclusiveEnd: false,
+                });
 
                 const description = this.formatDescription({
                     defectName: a.vidDefektName.trim(),
@@ -95,7 +86,7 @@ export class VodovodSkopjeStrategy
                 });
 
                 const geomWkt = geometry
-                    ? `SRID=4326;POINT(${geometry.x} ${geometry.y})`
+                    ? formatEwktPoint(geometry.x, geometry.y)
                     : null;
 
                 const code =
@@ -108,10 +99,10 @@ export class VodovodSkopjeStrategy
                         : null);
 
                 return {
-                    externalId: String(a.idINT),
+                    externalId: this.buildExternalId(a.idINT),
                     source: this.source,
                     category: this.category,
-                    title: `${defectType}: ${municipality}`,
+                    title: this.formatTitle(defectType, municipality),
                     description: description,
                     municipalityCode: code,
                     locationLabel: locationLabel,
@@ -149,6 +140,14 @@ export class VodovodSkopjeStrategy
                 };
             }),
         );
+    }
+
+    private buildExternalId(idInt: number): string {
+        return String(idInt);
+    }
+
+    private formatTitle(defectType: string, municipality: string): string {
+        return `${defectType}: ${municipality}`;
     }
 
     private formatDescription(params: {
@@ -197,18 +196,5 @@ export class VodovodSkopjeStrategy
         }
 
         return `${firstSentence} Екипите вршат интервенција на водоводната мрежа${urgencyText}.`;
-    }
-
-    private capitalizeFirst(text: string): string {
-        return text.charAt(0).toUpperCase() + text.slice(1);
-    }
-
-    private toTitleCase(text: string): string {
-        return text
-            .toLowerCase()
-            .replace(
-                /\p{L}+/gu,
-                (word) => word.charAt(0).toUpperCase() + word.slice(1),
-            );
     }
 }

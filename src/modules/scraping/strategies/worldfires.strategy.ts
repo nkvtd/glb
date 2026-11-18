@@ -8,6 +8,8 @@ import {
 } from '../../../core/validation/worldfires.js';
 import type { MunicipalityResolver } from '../resolver.js';
 import type { ScrapingStrategy } from '../strategy.interface.js';
+import { fetchJsonOrNull } from './util/fetch.js';
+import { formatEwktPoint } from './util/geo.js';
 
 const ACTIVE_WINDOW_MS = 6 * 60 * 60 * 1000;
 const CROSS_BORDER_MIN_FRP_MW = 10.0;
@@ -49,24 +51,12 @@ export class WorldFiresStrategy
     }
 
     async fetch(): Promise<WorldFiresHotspot[]> {
-        const response = await fetch(this.url, {
-            headers: { Accept: 'application/json' },
-            signal: AbortSignal.timeout(15_000),
-        });
-
-        if (response.status === 204) {
-            return [];
-        }
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(
-                `Fetch failed with status code ${response.status}: ${errorText}`,
-            );
-        }
-
-        return worldFiresHotspotsResponseSchema.parse(await response.json())
-            .data;
+        const parsed = await fetchJsonOrNull(
+            this.url,
+            worldFiresHotspotsResponseSchema,
+            { headers: { Accept: 'application/json' } },
+        );
+        return parsed?.data ?? [];
     }
 
     async parse(items: WorldFiresHotspot[]): Promise<WorldFiresReportInsert[]> {
@@ -216,7 +206,6 @@ export class WorldFiresStrategy
                 );
                 const firstDetection = step.detections[0];
                 if (!firstDetection) continue;
-                const title = `${this.formatTitlePrefix(totalFrpMw)}: ${cluster.locationLabel}`;
                 const description = this.formatDescription({
                     locationLabel: cluster.locationLabel,
                     isDomestic: cluster.isDomestic,
@@ -233,11 +222,11 @@ export class WorldFiresStrategy
                     ),
                     source: this.source,
                     category: this.category,
-                    title,
+                    title: this.formatTitle(totalFrpMw, cluster.locationLabel),
                     description,
                     municipalityCode: cluster.municipalityCode,
                     locationLabel: cluster.locationLabel,
-                    geom: `SRID=4326;POINT(${centroidLng} ${centroidLat})`,
+                    geom: formatEwktPoint(centroidLng, centroidLat),
                     status: isOngoing ? 'ongoing' : 'ended',
                     observedAt: now,
                     startsAt: startedAt,
@@ -273,6 +262,10 @@ export class WorldFiresStrategy
             .slice(0, 16)
             .replace(/[-:]/g, '');
         return `worldfires-${compactTime}Z-${lat.toFixed(3)}-${lon.toFixed(3)}-t${tier}`;
+    }
+
+    private formatTitle(frpMw: number, locationLabel: string): string {
+        return `${this.formatTitlePrefix(frpMw)}: ${locationLabel}`;
     }
 
     private getIntensityTier(frpMw: number): 1 | 2 | 3 | 4 {

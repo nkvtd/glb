@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import type {
     VodovodPrilepReportInsert,
     VodovodPrilepSupply,
@@ -8,13 +7,16 @@ import {
     vodovodPrilepResponseSchema,
 } from '../../../core/validation/vodovod-prilep.js';
 import type { ScrapingStrategy } from '../strategy.interface.js';
+import { BROWSER_JSON_HEADERS, fetchJson } from './util/fetch.js';
+import { hashExternalId } from './util/hash.js';
+import { decodeHtmlText, ensurePeriod } from './util/text.js';
+import {
+    buildLocalWindow,
+    deriveLifecycleStatus,
+    extractIsoDay,
+} from './util/time.js';
 
 const PRILEP_MUNICIPALITY_CODE = 'MK0050800';
-
-const SKOPJE_OFFSET_FORMATTER = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'Europe/Skopje',
-    timeZoneName: 'longOffset',
-});
 
 const ABNORMAL_SUPPLY_RE =
     /нарушено|намален|заматување|неисправна|забранет|не\s+ја\s+користат|не\s+се\s+користи|преврива|дефект|прекин|проблем/iu;
@@ -43,25 +45,9 @@ export class VodovodPrilepStrategy
     }
 
     async fetch(): Promise<VodovodPrilepItem[]> {
-        const response = await fetch(this.url, {
-            headers: {
-                Accept: 'application/json',
-                'User-Agent':
-                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-            },
-            signal: AbortSignal.timeout(15_000),
+        return fetchJson(this.url, vodovodPrilepResponseSchema, {
+            headers: { ...BROWSER_JSON_HEADERS },
         });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(
-                `Fetch failed with status code ${response.status}: ${errorText}`,
-            );
-        }
-
-        const data = await response.json();
-
-        return vodovodPrilepResponseSchema.parse(data);
     }
 
     async parse(
@@ -71,18 +57,10 @@ export class VodovodPrilepStrategy
         const results: VodovodPrilepReportInsert[] = [];
 
         for (const post of posts) {
-            const day = this.extractSkopjeDay(post.date);
+            const day = extractIsoDay(post.date);
             if (!day) continue;
 
-            const dayBounds = this.buildSkopjeWindow(
-                day,
-                0,
-                0,
-                23,
-                59,
-                59,
-                999,
-            );
+            const dayBounds = buildLocalWindow(day, 0, 0, 23, 59, 59, 999);
             if (!dayBounds) continue;
 
             const postTitle =
@@ -110,31 +88,23 @@ export class VodovodPrilepStrategy
                     ABNORMAL_SUPPLY_RE.test(supplySummary) ||
                     !/нормално/iu.test(supplySummary);
 
+                const lifecycle = deriveLifecycleStatus(
+                    now,
+                    dayBounds.startsAt,
+                    dayBounds.endsAt,
+                );
                 const status = isAbnormal
-                    ? now < dayBounds.startsAt
-                        ? 'scheduled'
-                        : now <= dayBounds.endsAt
-                          ? 'ongoing'
-                          : 'ended'
-                    : now > dayBounds.endsAt
+                    ? lifecycle
+                    : lifecycle === 'ended'
                       ? 'ended'
                       : 'omitted';
 
-                const title = isAbnormal
-                    ? 'Нарушено водоснабдување: Прилеп'
-                    : 'Водоснабдување: Прилеп';
-
-                const externalId = createHash('sha256')
-                    .update(`${post.id}|supply`)
-                    .digest('hex')
-                    .slice(0, 32);
-
                 results.push({
-                    externalId,
+                    externalId: this.buildExternalId(post.id, 'supply'),
                     source: this.source,
                     category: this.category,
-                    title,
-                    description: this.ensurePeriod(supplySummary),
+                    title: this.formatSupplyTitle(isAbnormal),
+                    description: this.formatSupplyDescription(supplySummary),
                     municipalityCode: PRILEP_MUNICIPALITY_CODE,
                     locationLabel: 'Прилеп',
                     status,
@@ -169,7 +139,7 @@ export class VodovodPrilepStrategy
                 } = this.parseOutageHeading(outageHtml);
 
                 const outageBounds =
-                    this.buildSkopjeWindow(
+                    buildLocalWindow(
                         day,
                         startHour,
                         startMinute,
@@ -179,12 +149,11 @@ export class VodovodPrilepStrategy
                         0,
                     ) ?? dayBounds;
 
-                const outageStatus =
-                    now < outageBounds.startsAt
-                        ? 'scheduled'
-                        : now <= outageBounds.endsAt
-                          ? 'ongoing'
-                          : 'ended';
+                const outageStatus = deriveLifecycleStatus(
+                    now,
+                    outageBounds.startsAt,
+                    outageBounds.endsAt,
+                );
 
                 for (const street of streets) {
                     const normalizedKey = street
@@ -192,20 +161,21 @@ export class VodovodPrilepStrategy
                         .trim()
                         .toLowerCase();
 
-                    const externalId = createHash('sha256')
-                        .update(`${post.id}|${normalizedKey}`)
-                        .digest('hex')
-                        .slice(0, 32);
-
                     const locationLabel = this.formatLocationLabel(street);
-                    const description = `Прекин во водоснабдувањето ${reasonClause} во периодот од ${periodLabel} часот на ${street}.`;
 
                     results.push({
-                        externalId,
+                        externalId: this.buildExternalId(
+                            post.id,
+                            normalizedKey,
+                        ),
                         source: this.source,
                         category: this.category,
-                        title: `Прекин во водоснабдувањето: ${street}`,
-                        description,
+                        title: this.formatOutageTitle(street),
+                        description: this.formatOutageDescription(
+                            street,
+                            periodLabel,
+                            reasonClause,
+                        ),
                         municipalityCode: PRILEP_MUNICIPALITY_CODE,
                         locationLabel,
                         status: outageStatus,
@@ -248,24 +218,18 @@ export class VodovodPrilepStrategy
                     bodyText,
                 );
                 const locationLabel = this.formatLocationLabel(extractedLoc);
-                const status =
-                    now < dayBounds.startsAt
-                        ? 'scheduled'
-                        : now <= dayBounds.endsAt
-                          ? 'ongoing'
-                          : 'ended';
-
-                const externalId = createHash('sha256')
-                    .update(`${post.id}|notice`)
-                    .digest('hex')
-                    .slice(0, 32);
+                const status = deriveLifecycleStatus(
+                    now,
+                    dayBounds.startsAt,
+                    dayBounds.endsAt,
+                );
 
                 results.push({
-                    externalId,
+                    externalId: this.buildExternalId(post.id, 'notice'),
                     source: this.source,
                     category: this.category,
-                    title: `Вонредно известување: ${extractedLoc ?? 'Прилеп'}`,
-                    description: this.ensurePeriod(bodyText),
+                    title: this.formatNoticeTitle(extractedLoc),
+                    description: this.formatNoticeDescription(bodyText),
                     municipalityCode: PRILEP_MUNICIPALITY_CODE,
                     locationLabel,
                     status,
@@ -288,6 +252,40 @@ export class VodovodPrilepStrategy
         }
 
         return results;
+    }
+
+    private buildExternalId(postId: number, key: string): string {
+        return hashExternalId(postId, key);
+    }
+
+    private formatSupplyTitle(isAbnormal: boolean): string {
+        return isAbnormal
+            ? 'Нарушено водоснабдување: Прилеп'
+            : 'Водоснабдување: Прилеп';
+    }
+
+    private formatSupplyDescription(supplySummary: string): string {
+        return ensurePeriod(supplySummary);
+    }
+
+    private formatOutageTitle(street: string): string {
+        return `Прекин во водоснабдувањето: ${street}`;
+    }
+
+    private formatOutageDescription(
+        street: string,
+        periodLabel: string,
+        reasonClause: string,
+    ): string {
+        return `Прекин во водоснабдувањето ${reasonClause} во периодот од ${periodLabel} часот на ${street}.`;
+    }
+
+    private formatNoticeTitle(location: string | null): string {
+        return `Вонредно известување: ${location ?? 'Прилеп'}`;
+    }
+
+    private formatNoticeDescription(bodyText: string): string {
+        return ensurePeriod(bodyText);
     }
 
     private splitContentSections(html: string): {
@@ -452,86 +450,10 @@ export class VodovodPrilepStrategy
         return `${location}, Прилеп`;
     }
 
-    private ensurePeriod(text: string): string {
-        const stripped = text.replace(/\.+$/, '').trim();
-        return `${stripped}.`;
-    }
-
-    private extractSkopjeDay(rawDate: string): string | null {
-        const match = rawDate.trim().match(/^(\d{4}-\d{2}-\d{2})/);
-        return match?.[1] ?? null;
-    }
-
-    private buildSkopjeWindow(
-        day: string,
-        startHour: number,
-        startMinute: number,
-        endHour: number,
-        endMinute: number,
-        endSecond = 0,
-        endMs = 0,
-    ): { startsAt: Date; endsAt: Date } | null {
-        const startProbe = new Date(`${day}T00:00:00Z`);
-        const endProbe = new Date(`${day}T21:00:00Z`);
-
-        if (
-            Number.isNaN(startProbe.getTime()) ||
-            Number.isNaN(endProbe.getTime())
-        ) {
-            return null;
-        }
-
-        const startOffset = this.getSkopjeOffset(startProbe);
-        const endOffset = this.getSkopjeOffset(endProbe);
-
-        const pad2 = (n: number) => String(n).padStart(2, '0');
-        const pad3 = (n: number) => String(n).padStart(3, '0');
-
-        const startsAt = new Date(
-            `${day}T${pad2(startHour)}:${pad2(startMinute)}:00.000${startOffset}`,
-        );
-        const endsAt = new Date(
-            `${day}T${pad2(endHour)}:${pad2(endMinute)}:${pad2(endSecond)}.${pad3(endMs)}${endOffset}`,
-        );
-
-        if (
-            Number.isNaN(startsAt.getTime()) ||
-            Number.isNaN(endsAt.getTime())
-        ) {
-            return null;
-        }
-
-        return { startsAt, endsAt };
-    }
-
-    private getSkopjeOffset(utcProbe: Date): string {
-        const tzPart =
-            SKOPJE_OFFSET_FORMATTER.formatToParts(utcProbe).find(
-                (p) => p.type === 'timeZoneName',
-            )?.value ?? 'GMT+01:00';
-
-        const offset = tzPart.replace('GMT', '');
-        return /^[+-]\d{2}:\d{2}$/.test(offset) ? offset : '+01:00';
-    }
-
     private cleanText(raw: string): string {
-        return raw
-            .replace(/<[^>]+>/g, ' ')
-            .replace(/&#8211;|&ndash;/gi, '–')
-            .replace(/&#8212;|&mdash;/gi, '—')
-            .replace(/&nbsp;|&#160;/gi, ' ')
-            .replace(/&amp;|&#038;/gi, '&')
-            .replace(/&quot;|&#8220;|&#8221;|&ldquo;|&rdquo;|&#8222;/gi, '"')
-            .replace(/&#8216;|&#8217;|&lsquo;|&rsquo;/gi, "'")
-            .replace(/&hellip;|&#8230;/gi, '...')
+        return decodeHtmlText(raw)
             .replace(/\[(?:\.\.\.|…)\]/g, '')
-            .replace(/&lt;|&#60;/gi, '<')
-            .replace(/&gt;|&#62;/gi, '>')
-            .replace(/\(\s+/g, '(')
-            .replace(/\s+\)/g, ')')
-            .replace(/\s+,/g, ',')
             .replace(/(?<!\d),(?!\s)/g, ', ')
-            .replace(/,(?!\s|\d)/g, ', ')
             .replace(/\.(?=\p{Lu})/gu, '. ')
             .replace(/(\d)\s*л\/с/giu, '$1л/с')
             .replace(/\s+/g, ' ')

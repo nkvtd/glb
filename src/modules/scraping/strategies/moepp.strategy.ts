@@ -8,13 +8,19 @@ import {
 } from '../../../core/validation/moepp.js';
 import type { MunicipalityResolver } from '../resolver.js';
 import type { ScrapingStrategy } from '../strategy.interface.js';
+import {
+    getAirQualityAdjective,
+    getAirQualityTitlePrefix,
+    POOR_AIR_INDEX_CODES,
+} from './util/air-quality.js';
+import { fetchJson } from './util/fetch.js';
+import { formatEwktPoint } from './util/geo.js';
+import { toTitleCase } from './util/text.js';
 
 type MoeppRaw = {
     stations: MoeppStation[];
     measurements: MoeppMeasurement[];
 };
-
-const POOR_AIR_INDEX_CODES = new Set(['04', '05', '06']);
 
 export class MoeppStrategy
     implements ScrapingStrategy<MoeppRaw, MoeppReportInsert>
@@ -34,25 +40,16 @@ export class MoeppStrategy
     }
 
     async fetch(): Promise<MoeppRaw> {
-        const stationsResponse = await fetch(`${this.url}/stations`, {
-            signal: AbortSignal.timeout(15_000),
-        });
-
-        if (!stationsResponse.ok) {
-            const errorText = await stationsResponse.text();
-            throw new Error(
-                `Fetch failed with status code ${stationsResponse.status}: ${errorText}`,
-            );
-        }
-
-        const stations = moeppStationsResponseSchema.parse(
-            await stationsResponse.json(),
+        const stations = await fetchJson(
+            `${this.url}/stations`,
+            moeppStationsResponseSchema,
         );
 
         const today = new Date().toLocaleDateString('en-CA');
 
-        const measurementsResponse = await fetch(
+        const measurements = await fetchJson(
             `${this.url}/latest-measures-hour-stations`,
+            moeppMeasurementsResponseSchema,
             {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -62,19 +59,7 @@ export class MoeppStrategy
                     DateTo: today,
                     AggregationType: 1,
                 }),
-                signal: AbortSignal.timeout(15_000),
             },
-        );
-
-        if (!measurementsResponse.ok) {
-            const errorText = await measurementsResponse.text();
-            throw new Error(
-                `Fetch failed with status code ${measurementsResponse.status}: ${errorText}`,
-            );
-        }
-
-        const measurements = moeppMeasurementsResponseSchema.parse(
-            await measurementsResponse.json(),
         );
 
         return { stations, measurements };
@@ -97,7 +82,9 @@ export class MoeppStrategy
             const station = stationsById.get(measurement.stationID);
             if (!station) continue;
 
-            const stationName = this.toTitleCase(station.name.trim());
+            const stationName = toTitleCase(station.name.trim(), {
+                uppercaseShortWords: true,
+            });
             const city = this.formatCity(station.city);
             const locationLabel = this.formatLocation(stationName, city);
             const isPoor =
@@ -112,22 +99,22 @@ export class MoeppStrategy
                 this.resolver.resolveText(station.city) ??
                 this.resolver.resolveText(station.address);
 
-            const title = `${this.formatTitlePrefix(measurement.aQ_Index)}: ${locationLabel}`;
-            const description = this.formatDescription({
-                stationName,
-                city,
-                measurement,
-            });
-
             reports.push({
-                externalId: `${station.id}-${measurement.fromTime}`,
+                externalId: this.buildExternalId(
+                    station.id,
+                    measurement.fromTime,
+                ),
                 source: this.source,
                 category: this.category,
-                title,
-                description,
+                title: this.formatTitle(measurement.aQ_Index, locationLabel),
+                description: this.formatDescription({
+                    stationName,
+                    city,
+                    measurement,
+                }),
                 municipalityCode,
                 locationLabel,
-                geom: `SRID=4326;POINT(${station.longitude} ${station.latitude})`,
+                geom: formatEwktPoint(station.longitude, station.latitude),
                 status: isPoor ? 'ongoing' : 'omitted',
                 observedAt: now,
                 startsAt: new Date(measurement.toTime),
@@ -142,23 +129,15 @@ export class MoeppStrategy
         return reports;
     }
 
-    private formatTitlePrefix(index: MoeppIndex | null): string {
-        switch (index?.code) {
-            case '01':
-                return 'Добар квалитет на воздух';
-            case '02':
-                return 'Прифатлив квалитет на воздух';
-            case '03':
-                return 'Умерен квалитет на воздух';
-            case '04':
-                return 'Лош квалитет на воздух';
-            case '05':
-                return 'Многу лош квалитет на воздух';
-            case '06':
-                return 'Екстремно лош квалитет на воздух';
-            default:
-                return 'Квалитет на воздух (нема податоци)';
-        }
+    private buildExternalId(stationId: number, fromTime: string): string {
+        return `${stationId}-${fromTime}`;
+    }
+
+    private formatTitle(
+        index: MoeppIndex | null,
+        locationLabel: string,
+    ): string {
+        return `${getAirQualityTitlePrefix(index?.code)}: ${locationLabel}`;
     }
 
     private formatDescription(params: {
@@ -174,7 +153,7 @@ export class MoeppStrategy
                 ? `На мерната станица во ${city}`
                 : `На мерната станица „${stationName}“ во ${city}`;
 
-        const adjective = this.getClassificationAdjective(aqCode);
+        const adjective = getAirQualityAdjective(aqCode);
 
         if (!adjective) {
             return `${locationPhrase} моментално нема податоци за квалитетот на воздухот.`;
@@ -264,32 +243,13 @@ export class MoeppStrategy
         return `Измерени концентрации: ${rest.join(', ')} и ${last}.`;
     }
 
-    private getClassificationAdjective(code?: string): string | null {
-        switch (code) {
-            case '01':
-                return 'добар';
-            case '02':
-                return 'прифатлив';
-            case '03':
-                return 'умерен';
-            case '04':
-                return 'лош';
-            case '05':
-                return 'многу лош';
-            case '06':
-                return 'екстремно лош';
-            default:
-                return null;
-        }
-    }
-
     private formatCity(rawCity: string): string {
         const cleaned = rawCity
             .replace(/^Скопје\s*-\s*/i, '')
             .replace(/^с\.\s*/i, '')
             .trim();
 
-        return this.toTitleCase(cleaned);
+        return toTitleCase(cleaned, { uppercaseShortWords: true });
     }
 
     private formatLocation(stationName: string, city: string): string {
@@ -298,15 +258,5 @@ export class MoeppStrategy
         }
 
         return `${stationName}, ${city}`;
-    }
-
-    private toTitleCase(text: string): string {
-        return text
-            .toLowerCase()
-            .replace(/\p{L}+/gu, (word) =>
-                word.length <= 2
-                    ? word.toUpperCase()
-                    : word.charAt(0).toUpperCase() + word.slice(1),
-            );
     }
 }

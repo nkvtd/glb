@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import type { MeteoalarmReportInsert } from '../../../core/types/meteoalarm.js';
 import {
     type MeteoalarmInfo,
@@ -7,6 +6,9 @@ import {
 } from '../../../core/validation/meteoalarm.js';
 import type { MunicipalityResolver } from '../resolver.js';
 import type { ScrapingStrategy } from '../strategy.interface.js';
+import { fetchJson } from './util/fetch.js';
+import { hashExternalId } from './util/hash.js';
+import { deriveLifecycleStatus } from './util/time.js';
 
 const AWARENESS_TYPES_MK: Record<
     number,
@@ -80,20 +82,7 @@ export class MeteoalarmStrategy
     }
 
     async fetch(): Promise<MeteoalarmWarningWrapper[]> {
-        const response = await fetch(this.url, {
-            signal: AbortSignal.timeout(15_000),
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(
-                `Fetch failed with status code ${response.status}: ${errorText}`,
-            );
-        }
-
-        const data = await response.json();
-        const parsed = meteoalarmResponseSchema.parse(data);
-
+        const parsed = await fetchJson(this.url, meteoalarmResponseSchema);
         return parsed.warnings;
     }
 
@@ -128,14 +117,16 @@ export class MeteoalarmStrategy
             const isCancelled = alert.msgType.toLowerCase() === 'cancel';
             const isGreen = awarenessLevel?.code === 1;
 
+            const lifecycle = deriveLifecycleStatus(now, startsAt, endsAt, {
+                closed: isCancelled,
+                inclusiveEnd: false,
+            });
             const status =
-                isCancelled || (endsAt !== null && now >= endsAt)
+                lifecycle === 'ended'
                     ? 'ended'
                     : isGreen
                       ? 'omitted'
-                      : now < startsAt
-                        ? 'scheduled'
-                        : 'ongoing';
+                      : lifecycle;
 
             const validMkText = this.extractValidCyrillicText(
                 mkInfo?.description,
@@ -174,7 +165,6 @@ export class MeteoalarmStrategy
 
                 for (const target of targets) {
                     const locationLabel = target.nameMk;
-                    const title = `${eventTitle}: ${locationLabel}`;
                     const description = this.formatDescription({
                         locationLabel,
                         eventInstrumental,
@@ -182,24 +172,17 @@ export class MeteoalarmStrategy
                         validMkText,
                     });
 
-                    const externalId = createHash('sha256')
-                        .update(
-                            [
-                                awarenessType?.code ?? 'u',
-                                awarenessLevel?.code ?? 'x',
-                                startsAt.toISOString(),
-                                endsAt ? endsAt.toISOString() : 'open',
-                                target.code ?? locationLabel,
-                            ].join('|'),
-                        )
-                        .digest('hex')
-                        .slice(0, 32);
-
                     results.push({
-                        externalId,
+                        externalId: this.buildExternalId(
+                            awarenessType?.code ?? 'u',
+                            awarenessLevel?.code ?? 'x',
+                            startsAt,
+                            endsAt,
+                            target.code ?? locationLabel,
+                        ),
                         source: this.source,
                         category: this.category,
-                        title,
+                        title: this.formatTitle(eventTitle, locationLabel),
                         description,
                         municipalityCode: target.code,
                         locationLabel,
@@ -233,6 +216,26 @@ export class MeteoalarmStrategy
         }
 
         return results;
+    }
+
+    private buildExternalId(
+        typeCode: string | number,
+        levelCode: string | number,
+        startsAt: Date,
+        endsAt: Date | null,
+        targetKey: string,
+    ): string {
+        return hashExternalId(
+            typeCode,
+            levelCode,
+            startsAt.toISOString(),
+            endsAt ? endsAt.toISOString() : 'open',
+            targetKey,
+        );
+    }
+
+    private formatTitle(eventTitle: string, locationLabel: string): string {
+        return `${eventTitle}: ${locationLabel}`;
     }
 
     private formatDescription(params: {

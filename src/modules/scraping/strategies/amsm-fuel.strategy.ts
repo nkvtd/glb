@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import type { AmsmFuelEventInsert } from '../../../core/types/amsm-fuel.js';
 import {
     type AmsmFuelAcf,
@@ -6,6 +5,8 @@ import {
     amsmFuelResponseSchema,
 } from '../../../core/validation/amsm-fuel.js';
 import type { ScrapingStrategy } from '../strategy.interface.js';
+import { fetchJson } from './util/fetch.js';
+import { hashExternalId } from './util/hash.js';
 
 export class AmsmFuelStrategy
     implements ScrapingStrategy<AmsmFuelItem[], AmsmFuelEventInsert>
@@ -23,20 +24,7 @@ export class AmsmFuelStrategy
     }
 
     async fetch(): Promise<AmsmFuelItem[]> {
-        const response = await fetch(this.url, {
-            signal: AbortSignal.timeout(15_000),
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(
-                `Fetch failed with status code ${response.status}: ${errorText}`,
-            );
-        }
-
-        const data = await response.json();
-
-        return amsmFuelResponseSchema.parse(data);
+        return fetchJson(this.url, amsmFuelResponseSchema);
     }
 
     async parse(items: AmsmFuelItem[]): Promise<AmsmFuelEventInsert[]> {
@@ -51,11 +39,6 @@ export class AmsmFuelStrategy
             const lastUpdateRaw = acf.gas_last_update.trim();
             const country = acf.gas_country.trim() || 'Македонија';
 
-            const externalId = createHash('sha256')
-                .update(`${item.id}|${lastUpdateRaw}|${p95}|${p98}|${diesel}`)
-                .digest('hex')
-                .slice(0, 32);
-
             const parsedUpdate = new Date(lastUpdateRaw);
             const startsAt = Number.isNaN(parsedUpdate.getTime())
                 ? now
@@ -64,10 +47,16 @@ export class AmsmFuelStrategy
             const description = this.formatDescription(acf);
 
             return {
-                externalId,
+                externalId: this.buildExternalId(
+                    item.id,
+                    lastUpdateRaw,
+                    p95,
+                    p98,
+                    diesel,
+                ),
                 source: this.source,
                 category: this.category,
-                title: `Тековни цени на горива`,
+                title: this.formatTitle(),
                 description,
                 status: 'ongoing',
                 observedAt: now,
@@ -93,6 +82,20 @@ export class AmsmFuelStrategy
                 },
             };
         });
+    }
+
+    private buildExternalId(
+        postId: number,
+        lastUpdateRaw: string,
+        p95: string,
+        p98: string,
+        diesel: string,
+    ): string {
+        return hashExternalId(postId, lastUpdateRaw, p95, p98, diesel);
+    }
+
+    private formatTitle(): string {
+        return 'Тековни цени на горива';
     }
 
     private formatDescription(acf: AmsmFuelAcf): string {
