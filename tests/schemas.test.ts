@@ -10,6 +10,7 @@ import {
     moeppStationsResponseSchema,
 } from '../src/core/validation/moepp.js';
 import { nbrmRatesResponseSchema } from '../src/core/validation/nbrm-rates.js';
+import { opstinaVelesResponseSchema } from '../src/core/validation/opstina-veles.js';
 import { sensorCommunityResponseSchema } from '../src/core/validation/sensor-community.js';
 import { vodovodKumanovoResponseSchema } from '../src/core/validation/vodovod-kumanovo.js';
 import { vodovodPrilepResponseSchema } from '../src/core/validation/vodovod-prilep.js';
@@ -27,6 +28,7 @@ import {
     prilepPost,
     sensor,
     station,
+    velesPost,
     worldFiresHotspot,
 } from './util/fixtures.js';
 
@@ -588,6 +590,35 @@ describe('nbrmRatesResponseSchema', () => {
                     datum: '2026-11-17',
                     oznaka: 'EUR',
                 },
+            ]).success,
+            false,
+        );
+    });
+});
+
+describe('opstinaVelesResponseSchema', () => {
+    it('parses WordPress posts with date_gmt', () => {
+        assert.equal(
+            at(opstinaVelesResponseSchema.parse([velesPost]), 0).id,
+            5011,
+        );
+    });
+
+    it('rejects string ids, missing date_gmt and missing content blocks', () => {
+        assert.equal(
+            opstinaVelesResponseSchema.safeParse([{ ...velesPost, id: '5011' }])
+                .success,
+            false,
+        );
+        assert.equal(
+            opstinaVelesResponseSchema.safeParse([
+                { ...velesPost, date_gmt: undefined },
+            ]).success,
+            false,
+        );
+        assert.equal(
+            opstinaVelesResponseSchema.safeParse([
+                { ...velesPost, content: undefined },
             ]).success,
             false,
         );

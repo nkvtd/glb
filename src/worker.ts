@@ -11,6 +11,7 @@ import { IodaReportsStrategy } from './modules/scraping/strategies/ioda-reports.
 import { MeteoalarmStrategy } from './modules/scraping/strategies/meteoalarm.strategy.js';
 import { MoeppStrategy } from './modules/scraping/strategies/moepp.strategy.js';
 import { NbrmRatesStrategy } from './modules/scraping/strategies/nbrm-rates.strategy.js';
+import { OpstinaVelesStrategy } from './modules/scraping/strategies/opstina-veles.strategy.js';
 import { SensorCommunityStrategy } from './modules/scraping/strategies/sensor-community.strategy.js';
 import { VodovodKumanovoStrategy } from './modules/scraping/strategies/vodovod-kumanovo.strategy.js';
 import { VodovodPrilepStrategy } from './modules/scraping/strategies/vodovod-prilep.strategy.js';
@@ -86,6 +87,16 @@ async function main() {
             'https://api.ioda.inetintel.cc.gatech.edu/v2',
             '*/10 * * * *',
             resolver,
+        ),
+        new OpstinaVelesStrategy(
+            'https://www.veles.gov.mk/wp-json/wp/v2/posts?categories=42&per_page=50&_fields=id,date,date_gmt,link,title,content',
+            '*/30 * * * *',
+            'water',
+        ),
+        new OpstinaVelesStrategy(
+            'https://www.veles.gov.mk/wp-json/wp/v2/posts?categories=42&per_page=50&_fields=id,date,date_gmt,link,title,content',
+            '*/31 * * * *',
+            'road',
         ),
     ];
 

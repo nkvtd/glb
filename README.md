@@ -116,6 +116,7 @@ It operates as two strictly separated processes sharing a single PostgreSQL + Po
 │        AMSM          •   Meteoalarm               •   Sensor.Community    │
 │        EMSC          •   Vodovod Kumanovo         •   Vodovod Prilep      │
 │        NBRM          •   WorldFires (VIIRS)       •   IODA                │
+│        Opština Veles                                                      │
 └───────────────────────────────────────────────────────────────────────────┘
                                    │  Scheduled Cron Jobs
                                    ▼
@@ -161,6 +162,7 @@ The worker currently runs several active scraping strategies on their respective
 | `emsc-csem` | `earthquake` | `reports` | `*/10 * * * *` | **EMSC-CSEM (FDSNWS)** | Queries recent earthquakes in a bounding box around Macedonia and resolves epicentres via PostGIS `ST_Covers`. Domestic quakes are kept at `M ≥ 2.0`; cross-border quakes only at `M ≥ 3.0`, stored without a municipality but with a spatial point so radius queries include felt border events. Quakes up to one hour old insert as `ongoing` for alerting and auto-end on the next reconciler tick. |
 | `vodovod-kumanovo` | `water` | `reports` | `*/30 * * * *` | **JP Vodovod – Kumanovo** | Scrapes daily water network defect and intervention lists via the WordPress REST API. Extracts individual street/settlement items, hashes post ID and normalized item text into a deterministic 32-character SHA-256 `externalId`, and maps `Europe/Skopje` daily bounds into `reports`. |
 | `vodovod-prilep` | `water` | `reports` | `*/30 * * * *` | **JKP Vodovod i Kanalizacija – Prilep** | Scrapes daily water supply bulletins and emergency notices via the WordPress REST API. Stores the daily municipal supply summary (`omitted` when normal, `ongoing` when disrupted) and emits per-street outage reports with their scheduled `Europe/Skopje` time window (e.g., `08:00–14:00`). |
+| `opstina-veles-water` / `opstina-veles-road` | `water` / `road` | `reports` | `*/30 * * * *` / `*/31 * * * *` | **Општина Велес** | Scrapes the municipal WordPress feed (category 42), classifying mixed water and road notices via keyword gates (EVN-style power posts are left to the `evn` source) while skipping administrative noise (tenders, urban planning, pest control). Parses `Europe/Skopje` event windows (single-day, multi-day — including `па (се) до` joins — and date-only ranges), extracts street/village/landmark locations (`ул.`, `село`, `селата`, `Св.` names, `Name1 и Name2` lists), and skips water lab/testing reports. Pins `municipalityCode = 'MK0010100'`. |
 | `nbrm-rates` | `currency_exchange` | `events` | `5 0 * * *` | **National Bank (NBRM)** | Fetches the current daily exchange-rate list, keeps one event for the active list, and retains the rates and application dates in its raw payload. |
 | `worldfires-hotspots` | `wildfire` | `reports` | `*/15 * * * *` | **WorldFires (NASA FIRMS VIIRS)** | Clusters 375 m VIIRS thermal anomalies within ~1.5 km and 6 hours into fire incidents, resolving municipalities via PostGIS `ST_Covers` (keeping cross-border passes at `FRP ≥ 10 MW`). Tracks chronological satellite passes so intensifying fires emit tier-escalated alerts and auto-close superseded tiers without duplicate steady-fire spam. |
 | `ioda` | `internet` | `events` | `*/10 * * * *` | **IODA (Georgia Tech)** | Tracks national internet health from 24-hour `bgp` and `ping-slash24` raw signals for the country and 15 domestic ISPs, aggregating multi-ASN operators. Normal readings are stored as `omitted`; degraded or outage states become `ongoing` state-feed events naming the affected operators. |
@@ -440,7 +442,7 @@ glb/
 │   │   ├── config.ts                    # Zod-validated environment configuration
 │   │   ├── enums.ts                     # Report and event category definitions
 │   │   ├── schema.ts                    # Drizzle ORM tables, PostGIS types & enums
-│   │   ├── types/                       # Typed rawPayloads (evn, moepp, vodovod-skopje, amsm-fuel, meteoalarm)
+│   │   ├── types/                       # Typed rawPayloads per source
 │   │   └── validation/                  # Upstream response Zod schemas
 │   ├── infrastructure/
 │   │   ├── alerting/                    # AlertChannel interface, Dispatcher & DiscordChannel

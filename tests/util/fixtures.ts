@@ -167,6 +167,20 @@ export const prilepPost = {
     },
 };
 
+export const velesPost = {
+    id: 5011,
+    date: '2026-11-18T09:10:00',
+    date_gmt: '2026-11-18T08:10:00',
+    link: 'https://www.veles.gov.mk/izvestuvanje-5011/',
+    title: {
+        rendered: 'ИЗВЕСТУВАЊЕ',
+    },
+    content: {
+        rendered:
+            '<p>Соопштуваме дека на <strong>21 ноември 2026</strong> ќе има прекин во снабдувањето со електрична енергија во периодот од 09:00 до 13:00 часот за корисниците на ул. Мито Хаџивасилев.</p>',
+    },
+};
+
 export const worldFiresHotspot = {
     time_utc: '2026-11-08T12:08:00Z',
     lat: '42.088',

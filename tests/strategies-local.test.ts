@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import { vodovodSkopjeResponseSchema } from '../src/core/validation/vodovod-skopje.js';
 import { EvnStrategy } from '../src/modules/scraping/strategies/evn.strategy.js';
 import { MeteoalarmStrategy } from '../src/modules/scraping/strategies/meteoalarm.strategy.js';
+import { OpstinaVelesStrategy } from '../src/modules/scraping/strategies/opstina-veles.strategy.js';
 import { VodovodKumanovoStrategy } from '../src/modules/scraping/strategies/vodovod-kumanovo.strategy.js';
 import { VodovodPrilepStrategy } from '../src/modules/scraping/strategies/vodovod-prilep.strategy.js';
 import { VodovodSkopjeStrategy } from '../src/modules/scraping/strategies/vodovod-skopje.strategy.js';
@@ -13,7 +14,7 @@ import {
     createStandardFakeResolver,
 } from './util/fakes.js';
 import { jsonResponse, textResponse, withFetch } from './util/fetch-mock.js';
-import { alert, kumanovoPost, prilepPost } from './util/fixtures.js';
+import { alert, kumanovoPost, prilepPost, velesPost } from './util/fixtures.js';
 
 const resolver = createStandardFakeResolver();
 
@@ -818,6 +819,680 @@ describe('VodovodPrilepStrategy', () => {
                 assert.equal(
                     pastSupply.endsAt?.toISOString(),
                     '2026-10-22T21:59:59.999Z',
+                );
+            });
+        });
+    });
+});
+
+describe('OpstinaVelesStrategy', () => {
+    const waterStrategy = new OpstinaVelesStrategy(
+        'https://veles.test/wp-json/wp/v2/posts',
+        '*/30 * * * *',
+        'water',
+    );
+    const roadStrategy = new OpstinaVelesStrategy(
+        'https://veles.test/wp-json/wp/v2/posts',
+        '*/30 * * * *',
+        'road',
+    );
+
+    describe('fetch()', () => {
+        it('fetches and validates the upstream payload', async () => {
+            await withFetch(
+                async () => jsonResponse([velesPost]),
+                async () => {
+                    const result = await waterStrategy.fetch();
+                    assert.ok(Array.isArray(result));
+                },
+            );
+        });
+
+        it('rejects non-OK responses', async () => {
+            await withFetch(
+                async () => textResponse('provider error', 500),
+                async () => {
+                    await assert.rejects(
+                        waterStrategy.fetch(),
+                        /Fetch failed with status code 500: provider error/,
+                    );
+                },
+            );
+        });
+    });
+
+    describe('parse()', () => {
+        it('skips EVN-style power notices in every category (covered by the evn source)', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const evnPosts = [
+                    velesPost,
+                    {
+                        id: 5012,
+                        date: '2026-11-18T09:00:00',
+                        date_gmt: '2026-11-18T08:00:00',
+                        link: 'https://www.veles.gov.mk/prekin-5012/',
+                        title: {
+                            rendered:
+                                'ПРЕКИН ВО СНАБДУВАЊЕТО СО ЕЛЕКТРИЧНА ЕНЕРГИЈА',
+                        },
+                        content: {
+                            rendered:
+                                '<p>Во с. Голо Брдо е планиран прекин во снабдувањето со електрична енергија од 08:00 до 12:00 часот на 22 ноември 2026.</p>',
+                        },
+                    },
+                    {
+                        id: 5013,
+                        date: '2026-11-18T07:00:00',
+                        date_gmt: '2026-11-18T06:00:00',
+                        link: 'https://www.veles.gov.mk/normalizirano-5013/',
+                        title: { rendered: 'ИЗВЕСТУВАЊЕ' },
+                        content: {
+                            rendered:
+                                '<p>Прекинот во снабдувањето со електрична енергија на ул. Мито Хаџивасилев е нормализиран.</p>',
+                        },
+                    },
+                ];
+                for (const strategy of [waterStrategy, roadStrategy]) {
+                    assert.deepEqual(await strategy.parse(evnPosts), []);
+                }
+            });
+        });
+
+        it('classifies open-ended water bans and dated network works, skipping PDF-bodied lab reports', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const parsed = await waterStrategy.parse([
+                    {
+                        id: 5021,
+                        date: '2026-11-18T10:00:00',
+                        date_gmt: '2026-11-18T09:00:00',
+                        link: 'https://www.veles.gov.mk/zabrana-5021/',
+                        title: { rendered: 'ИЗВЕСТУВАЊЕ' },
+                        content: {
+                            rendered:
+                                '<p>Информираме дека водата не е за пиење сè до укинување на забраната поради хидрантска интервенција во с. Раштани. Со почит, Општина Велес</p>',
+                        },
+                    },
+                    {
+                        id: 5022,
+                        date: '2026-11-17T09:00:00',
+                        date_gmt: '2026-11-17T08:00:00',
+                        link: 'https://veles.gov.mk/izveshtaj-5022/',
+                        title: {
+                            rendered: 'ИЗВЕШТАЈ ОД ТЕСТИРАЊЕ НА ВОДА ЗА ПИЕЊЕ',
+                        },
+                        content: {
+                            rendered:
+                                '<p>Објавен е извештај од лабораториското тестирање на безбедноста на водата за пиење од Акумулација Младост.</p><p><a href="https://www.veles.gov.mk/wp-content/uploads/2026/11/izvestaj voda.pdf">Извештај (PDF)</a></p>',
+                        },
+                    },
+                    {
+                        id: 5023,
+                        date: '2026-11-16T08:30:00',
+                        date_gmt: '2026-11-16T07:30:00',
+                        link: 'https://www.veles.gov.mk/vodovod-5023/',
+                        title: { rendered: 'СООПШТЕНИЕ' },
+                        content: {
+                            rendered:
+                                '<p>Поради реконструкција на водоводната мрежа на ул. Јане Сандански, водоснабдувањето ќе биде отежнато на 19.11.2026 година.</p>',
+                        },
+                    },
+                ]);
+                assert.equal(parsed.length, 2);
+
+                const ban = at(parsed, 0);
+                assert.equal(
+                    ban.title,
+                    'Известување за водоснабдување: Раштани',
+                );
+                assert.equal(ban.locationLabel, 'Раштани, Велес');
+                assert.equal(ban.status, 'ongoing');
+                assert.equal(ban.endsAt, null);
+                assert.equal(
+                    ban.startsAt?.toISOString(),
+                    '2026-11-18T09:00:00.000Z',
+                );
+                assert.doesNotMatch(present(ban.description), /Со\s+почит/iu);
+                assert.deepEqual(Object.keys(ban.rawPayload).sort(), [
+                    'date',
+                    'dateGmt',
+                    'link',
+                    'postId',
+                    'title',
+                ]);
+                assert.doesNotMatch(present(ban.description), /\.pdf/iu);
+
+                const works = at(parsed, 1);
+                assert.equal(
+                    works.title,
+                    'Известување за водоснабдување: ул. Јане Сандански',
+                );
+                assert.equal(works.status, 'scheduled');
+                assert.equal(
+                    works.startsAt?.toISOString(),
+                    '2026-11-18T23:00:00.000Z',
+                );
+                assert.equal(
+                    works.endsAt?.toISOString(),
+                    '2026-11-19T22:59:59.999Z',
+                );
+            });
+        });
+
+        it('classifies road notices from body text with multi-day and undated windows', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const parsed = await roadStrategy.parse([
+                    {
+                        id: 5031,
+                        date: '2026-11-17T10:00:00',
+                        date_gmt: '2026-11-17T09:00:00',
+                        link: 'https://www.veles.gov.mk/soobshtenie-5031/',
+                        title: { rendered: 'ИЗВЕСТУВАЊЕ' },
+                        content: {
+                            rendered:
+                                '<p>Поради асфалтерски работи, времен режим на сообраќај ќе биде воведен во периодот од 08:00 часот на ден 20.11.2026 до 17:00 часот на ден 21.11.2026 на ул. Партизанска.</p>',
+                        },
+                    },
+                    {
+                        id: 5032,
+                        date: '2026-11-18T08:45:00',
+                        date_gmt: '2026-11-18T07:45:00',
+                        link: 'https://www.veles.gov.mk/rekonstrukcija-5032/',
+                        title: {
+                            rendered:
+                                'ГРАДЕЖНИ АКТИВНОСТИ НА ПАТНАТА МРЕЖА ВО ВЕЛЕС',
+                        },
+                        content: {
+                            rendered:
+                                '<p>Започнаа градежни активности на улица Гоце Делчев и сообраќајот ќе биде отежнат во зоната на работите.</p>',
+                        },
+                    },
+                ]);
+                assert.equal(parsed.length, 2);
+
+                const regime = at(parsed, 0);
+                assert.equal(
+                    regime.title,
+                    'Сообраќајно известување: ул. Партизанска',
+                );
+                assert.equal(regime.locationLabel, 'ул. Партизанска, Велес');
+                assert.equal(regime.status, 'scheduled');
+                assert.equal(
+                    regime.startsAt?.toISOString(),
+                    '2026-11-20T07:00:00.000Z',
+                );
+                assert.equal(
+                    regime.endsAt?.toISOString(),
+                    '2026-11-21T16:00:00.000Z',
+                );
+
+                const undated = at(parsed, 1);
+                assert.equal(
+                    undated.title,
+                    'Градежни активности на патната мрежа во Велес',
+                );
+                assert.equal(undated.locationLabel, 'улица Гоце Делчев, Велес');
+                assert.equal(undated.status, 'ongoing');
+                assert.equal(undated.endsAt, null);
+                assert.equal(
+                    undated.startsAt?.toISOString(),
+                    '2026-11-18T07:45:00.000Z',
+                );
+            });
+        });
+
+        it('skips non-utility noise in both categories', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const noisePosts = [
+                    {
+                        id: 5041,
+                        date: '2026-11-18T09:00:00',
+                        date_gmt: '2026-11-18T08:00:00',
+                        link: 'https://www.veles.gov.mk/dup-5041/',
+                        title: { rendered: 'ЈАВЕН УВИД НА ДУП' },
+                        content: {
+                            rendered:
+                                '<p>Се објавува јавен увид на ДУП за урбанистички план во кој е предвидена реконструкција на водоводната мрежа.</p>',
+                        },
+                    },
+                    {
+                        id: 5042,
+                        date: '2026-11-18T09:00:00',
+                        date_gmt: '2026-11-18T08:00:00',
+                        link: 'https://www.veles.gov.mk/povik-5042/',
+                        title: {
+                            rendered: 'ЈАВЕН ПОВИК ЗА ИЗБОР НА ИЗВЕДУВАЧ',
+                        },
+                        content: {
+                            rendered:
+                                '<p>Општина Велес објавува тендер за избор на изведувач за асфалтирање на локални патишта.</p>',
+                        },
+                    },
+                    {
+                        id: 5043,
+                        date: '2026-11-18T09:00:00',
+                        date_gmt: '2026-11-18T08:00:00',
+                        link: 'https://www.veles.gov.mk/deratizacija-5043/',
+                        title: { rendered: 'ДЕРАТИЗАЦИЈА И ДЕЗИНСЕКЦИЈА' },
+                        content: {
+                            rendered:
+                                '<p>Во периодот од 20.11.2026 до 25.11.2026 ќе се изведува дератизација, дезинфекција и дезинсекција во реонот на трафостаница Велес.</p>',
+                        },
+                    },
+                ];
+
+                for (const strategy of [waterStrategy, roadStrategy]) {
+                    assert.deepEqual(await strategy.parse(noisePosts), []);
+                }
+            });
+        });
+
+        it('keeps pothole posts, horizontal marking, and interrupted-traffic notices with date-only multi-day windows', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const parsed = await roadStrategy.parse([
+                    {
+                        id: 5051,
+                        date: '2026-11-18T09:30:00',
+                        date_gmt: '2026-11-18T08:30:00',
+                        link: 'https://www.veles.gov.mk/dupka-5051/',
+                        title: { rendered: 'Дупка на коловозот' },
+                        content: {
+                            rendered:
+                                '<p>Поради дупка на коловозот на ул. Партизанска, сообраќајот е отежнат.</p>',
+                        },
+                    },
+                    {
+                        id: 5052,
+                        date: '2026-11-18T10:00:00',
+                        date_gmt: '2026-11-18T09:00:00',
+                        link: 'https://www.veles.gov.mk/beleme-5052/',
+                        title: {
+                            rendered:
+                                'ХОРИЗОНТАЛНО БЕЛЕЊЕ НА УЛИЦИТЕ НИЗ ГРАДОТ',
+                        },
+                        content: {
+                            rendered:
+                                '<p>Хоризонталното бележење на улиците низ градот ќе се изведува од 20.11.2026 до 25.11.2026.</p>',
+                        },
+                    },
+                    {
+                        id: 5053,
+                        date: '2026-11-18T11:00:00',
+                        date_gmt: '2026-11-18T10:00:00',
+                        link: 'https://www.veles.gov.mk/prekinat-5053/',
+                        title: {
+                            rendered:
+                                'Прекинат сообраќајот во Градски парк поради дефект на подземна инсталација',
+                        },
+                        content: {
+                            rendered:
+                                '<p>Прекинат сообраќајот во Градски парк поради дефект на подземна инсталација.</p>',
+                        },
+                    },
+                ]);
+                assert.equal(parsed.length, 3);
+
+                const pothole = at(parsed, 0);
+                assert.equal(pothole.category, 'road');
+                assert.equal(pothole.title, 'Дупка на коловозот');
+                assert.equal(pothole.locationLabel, 'ул. Партизанска, Велес');
+                assert.equal(pothole.status, 'ongoing');
+
+                const marking = at(parsed, 1);
+                assert.equal(
+                    marking.title,
+                    'Хоризонтално белење на улиците низ градот',
+                );
+                assert.equal(marking.locationLabel, 'Велес');
+                assert.equal(marking.status, 'scheduled');
+                assert.equal(
+                    marking.startsAt?.toISOString(),
+                    '2026-11-19T23:00:00.000Z',
+                );
+                assert.equal(
+                    marking.endsAt?.toISOString(),
+                    '2026-11-25T22:59:59.999Z',
+                );
+
+                const interrupted = at(parsed, 2);
+                assert.equal(interrupted.category, 'road');
+                assert.equal(interrupted.locationLabel, 'Велес');
+                assert.equal(interrupted.status, 'ongoing');
+            });
+        });
+
+        it('extracts Св. streets, village lists and transformer stations, and skips title-only lab reports', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const waterParsed = await waterStrategy.parse([
+                    {
+                        id: 5061,
+                        date: '2026-11-18T09:00:00',
+                        date_gmt: '2026-11-18T08:00:00',
+                        link: 'https://www.veles.gov.mk/sv-kiril-5061/',
+                        title: { rendered: 'ул. Св. Кирил и Методиј' },
+                        content: {
+                            rendered:
+                                '<p>Поради реконструкција на водоводната мрежа на ул. Св. Кирил и Методиј, водоснабдувањето ќе биде отежнато.</p>',
+                        },
+                    },
+                    {
+                        id: 5062,
+                        date: '2026-11-18T09:10:00',
+                        date_gmt: '2026-11-18T08:10:00',
+                        link: 'https://www.veles.gov.mk/ivankovci-5062/',
+                        title: { rendered: 'ВО СЕЛАТА ИВАНКОВЦИ И КУМАРИНО' },
+                        content: {
+                            rendered:
+                                '<p>Поради реконструкција на водоводната мрежа, водоснабдувањето во селата Иванковци и Кумарино ќе биде отежнато.</p>',
+                        },
+                    },
+                    {
+                        id: 5063,
+                        date: '2026-11-17T09:00:00',
+                        date_gmt: '2026-11-17T08:00:00',
+                        link: 'https://www.veles.gov.mk/izvestaj-5063/',
+                        title: {
+                            rendered: 'ИЗВЕШТАЈ ОД ТЕСТИРАЊЕ НА ВОДА ЗА ПИЕЊЕ',
+                        },
+                        content: {
+                            rendered:
+                                "<p><a href='/downloads/2026/izvestaj voda.pdf&amp;x=1'>Прочитајте го документот</a></p>",
+                        },
+                    },
+                ]);
+                assert.equal(waterParsed.length, 2);
+
+                const svStreet = at(waterParsed, 0);
+                assert.equal(svStreet.title, 'ул. Св. Кирил и Методиј');
+                assert.equal(
+                    svStreet.locationLabel,
+                    'ул. Св. Кирил и Методиј, Велес',
+                );
+                assert.equal(svStreet.status, 'ongoing');
+
+                const villages = at(waterParsed, 1);
+                assert.equal(
+                    villages.locationLabel,
+                    'Иванковци и Кумарино, Велес',
+                );
+                assert.deepEqual(Object.keys(svStreet.rawPayload).sort(), [
+                    'date',
+                    'dateGmt',
+                    'link',
+                    'postId',
+                    'title',
+                ]);
+                assert.doesNotMatch(present(svStreet.description), /\.pdf/iu);
+            });
+        });
+
+        it('skips PDF-bodied water lab/testing reports', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const parsed = await waterStrategy.parse([
+                    {
+                        id: 5081,
+                        date: '2026-11-17T09:00:00',
+                        date_gmt: '2026-11-17T08:00:00',
+                        link: 'https://veles.gov.mk/izveshtaj-5081/',
+                        title: {
+                            rendered:
+                                'ИЗВЕШТАЈ БЕЗБЕДНОСТ НА ВОДА ЗА ПИЕЊЕ ОД АКУМУЛАЦИЈА МЛАДОСТ',
+                        },
+                        content: {
+                            rendered:
+                                '<p>Објавен е извештај од лабораториското тестирање на безбедноста на водата за пиење од Акумулација Младост.</p><p><a href="https://www.veles.gov.mk/wp-content/uploads/2026/11/izvestaj voda.pdf">Извештај (PDF)</a></p>',
+                        },
+                    },
+                    {
+                        id: 5082,
+                        date: '2026-11-16T09:00:00',
+                        date_gmt: '2026-11-16T08:00:00',
+                        link: 'https://veles.gov.mk/izveshtaj-5082/',
+                        title: {
+                            rendered: 'ИЗВЕШТАИ ОД ТЕСТИРАЊЕ НА ВОДА ЗА ПИЕЊЕ',
+                        },
+                        content: {
+                            rendered:
+                                "<p><a href='/downloads/2026/izvestaj voda.pdf&amp;x=1'>Прочитајте го документот</a></p>",
+                        },
+                    },
+                ]);
+                assert.deepEqual(parsed, []);
+            });
+        });
+
+        it('keeps do-not-drink bans that cite a lab report in the body', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const parsed = await waterStrategy.parse([
+                    {
+                        id: 5091,
+                        date: '2026-11-18T09:00:00',
+                        date_gmt: '2026-11-18T08:00:00',
+                        link: 'https://www.veles.gov.mk/zabrana-5091/',
+                        title: { rendered: 'ИЗВЕСТУВАЊЕ' },
+                        content: {
+                            rendered:
+                                '<p>Водата не е за пиење во с. Раштани, сè до укинување на забраната, врз основа на извештајот од лабораториското тестирање.</p>',
+                        },
+                    },
+                ]);
+                assert.equal(parsed.length, 1);
+
+                const ban = at(parsed, 0);
+                assert.equal(ban.status, 'ongoing');
+                assert.equal(ban.endsAt, null);
+                assert.equal(ban.locationLabel, 'Раштани, Велес');
+                assert.match(
+                    present(ban.description),
+                    /извештајот од лабораториското тестирање/,
+                );
+            });
+        });
+
+        it('skips cultural "дневни" posts and rejects "Повеќе" boilerplate as a location', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const parsed = await waterStrategy.parse([
+                    {
+                        id: 5071,
+                        date: '2026-11-18T09:00:00',
+                        date_gmt: '2026-11-18T08:00:00',
+                        link: 'https://www.veles.gov.mk/kultura-5071/',
+                        title: { rendered: 'КУЛТУРНИ НАСТАНИ ВО ВЕЛЕС' },
+                        content: {
+                            rendered:
+                                '<p>Општина Велес ги објавува дневни настани за граѓаните во градскиот парк.</p>',
+                        },
+                    },
+                    {
+                        id: 5072,
+                        date: '2026-11-18T10:00:00',
+                        date_gmt: '2026-11-18T09:00:00',
+                        link: 'https://www.veles.gov.mk/voda-5072/',
+                        title: { rendered: 'ИЗВЕСТУВАЊЕ' },
+                        content: {
+                            rendered:
+                                '<p>Водоснабдувањето е нормализирано во с. Повеќе информации на нашиот веб-сајт.</p>',
+                        },
+                    },
+                ]);
+                assert.equal(parsed.length, 1);
+
+                const boilerplate = at(parsed, 0);
+                assert.equal(
+                    boilerplate.title,
+                    'Известување за водоснабдување: Велес',
+                );
+                assert.equal(boilerplate.locationLabel, 'Велес');
+            });
+        });
+
+        it('classifies street reconstruction titles as road even when the body mentions water pipes', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const posts = [
+                    {
+                        id: 5081,
+                        date: '2026-11-18T09:00:00',
+                        date_gmt: '2026-11-18T08:00:00',
+                        link: 'https://www.veles.gov.mk/rekonstrukcija-5081/',
+                        title: {
+                            rendered:
+                                'Реконструкцијата на улицата „Васил Ѓорѓов“ во завршна фаза',
+                        },
+                        content: {
+                            rendered: [
+                                '<p>Во рамките на активностите се заменуваат и водоводните траци, а сообраќајот во зоната на работите е отежнат.</p>',
+                                '<noscript><a href="https://www.veles.gov.mk/galerija/slika-1.jpg"><img src="https://www.veles.gov.mk/galerija/slika-1.jpg" /></a></noscript>',
+                            ].join('\n'),
+                        },
+                    },
+                ];
+                const parsed = await roadStrategy.parse(posts);
+                assert.equal(parsed.length, 1);
+                assert.equal(at(parsed, 0).category, 'road');
+                assert.doesNotMatch(
+                    present(at(parsed, 0).description),
+                    /slika-1\.jpg/,
+                );
+                assert.deepEqual(await waterStrategy.parse(posts), []);
+            });
+        });
+
+        it('parses multi-day windows joined by "па се до" and extracts "улица во село" locations', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const parsed = await roadStrategy.parse([
+                    {
+                        id: 5082,
+                        date: '2026-11-18T09:00:00',
+                        date_gmt: '2026-11-18T08:00:00',
+                        link: 'https://www.veles.gov.mk/beleme-5082/',
+                        title: { rendered: 'ИЗВЕСТУВАЊЕ' },
+                        content: {
+                            rendered:
+                                '<p>Поради асфалтерски работи, времен режим на сообраќај ќе биде воведен од 08:00 часот на ден 08.10.2026 па се до 21:00 часот на ден 12.10.2026 на ул. Партизанска.</p>',
+                        },
+                    },
+                    {
+                        id: 5083,
+                        date: '2026-11-18T10:00:00',
+                        date_gmt: '2026-11-18T09:00:00',
+                        link: 'https://www.veles.gov.mk/orizari-5083/',
+                        title: {
+                            rendered:
+                                'Реконструкција на улица во село Горно Оризари',
+                        },
+                        content: {
+                            rendered:
+                                '<p>Започна реконструкција на улица во село Горно Оризари, а сообраќајот ќе биде отежнат во зоната на работите.</p>',
+                        },
+                    },
+                ]);
+                assert.equal(parsed.length, 2);
+
+                const multiDay = at(parsed, 0);
+                assert.equal(multiDay.status, 'ended');
+                assert.equal(
+                    multiDay.startsAt?.toISOString(),
+                    '2026-10-08T06:00:00.000Z',
+                );
+                assert.equal(
+                    multiDay.endsAt?.toISOString(),
+                    '2026-10-12T19:00:00.000Z',
+                );
+
+                const villageStreet = at(parsed, 1);
+                assert.equal(
+                    villageStreet.locationLabel,
+                    'Горно Оризари, Велес',
+                );
+            });
+        });
+
+        it('restores proper-noun casing in all-caps titles and strips PR boilerplate from descriptions', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const waterParsed = await waterStrategy.parse([
+                    {
+                        id: 5101,
+                        date: '2026-11-18T09:00:00',
+                        date_gmt: '2026-11-18T08:00:00',
+                        link: 'https://www.veles.gov.mk/karaslari-5101/',
+                        title: {
+                            rendered:
+                                'РЕКОНСТРУКЦИЈА НА ВОДОВОДНАТА ЛИНИЈА ВО СЕЛО КАРАСЛАРИ',
+                        },
+                        content: {
+                            rendered:
+                                '<p>Поради реконструкција на водоводната линија во село Караслари, водоснабдувањето ќе биде отежнато на 19.11.2026 година.</p>',
+                        },
+                    },
+                ]);
+                assert.equal(waterParsed.length, 1);
+                assert.equal(
+                    at(waterParsed, 0).title,
+                    'Реконструкција на водоводната линија во село Караслари',
+                );
+
+                const roadParsed = await roadStrategy.parse([
+                    {
+                        id: 5102,
+                        date: '2026-11-18T10:00:00',
+                        date_gmt: '2026-11-18T09:00:00',
+                        link: 'https://www.veles.gov.mk/orizari-5102/',
+                        title: {
+                            rendered:
+                                'РЕКОНСТРУКЦИЈА НА УЛИЦА ВО СЕЛО ГОРНО ОРИЗАРИ',
+                        },
+                        content: {
+                            rendered:
+                                '<p>Започна реконструкција на улица во село Горно Оризари, а сообраќајот ќе биде отежнат во зоната на работите.</p>',
+                        },
+                    },
+                    {
+                        id: 5103,
+                        date: '2026-11-18T11:00:00',
+                        date_gmt: '2026-11-18T10:00:00',
+                        link: 'https://www.veles.gov.mk/dzhordzhov-5103/',
+                        title: {
+                            rendered:
+                                'РЕКОНСТРУКЦИЈА НА УЛИЦА „ВАСИЛ ЃОРЃОВ“ ВО СЕЛО КАРАСЛАРИ',
+                        },
+                        content: {
+                            rendered: [
+                                '<p>Општина Велес континуирано вложува финансиски средства во локалната патна инфраструктура.</p>',
+                                '<p>Реконструкцијата се реализираше со сопствени финансиски средства на Општина Велес.</p>',
+                                '<p>Со оваа активност се подобрува безбедноста на сообраќајот во село Караслари.</p>',
+                                '<p>Реконструкцијата на улицата „Васил Ѓорѓов“ во с. Караслари започна на 15.11.2026 год. и ги вклучува асфалтирањето и хоризонталното бележење.</p>',
+                                '<p>Сообраќајот во зоната на работите е отежнат во периодот од 20.11.2026 до 25.11.2026 година.</p>',
+                                '<p>Општина Велес ги замолува граѓаните за разбирливост и трпение.</p>',
+                                '<p>Со почит, Општина Велес</p>',
+                            ].join('\n'),
+                        },
+                    },
+                ]);
+                assert.equal(roadParsed.length, 2);
+                assert.equal(
+                    at(roadParsed, 0).title,
+                    'Реконструкција на улица во село Горно Оризари',
+                );
+
+                const roadWorks = at(roadParsed, 1);
+                assert.equal(
+                    roadWorks.title,
+                    'Реконструкција на улица „Васил Ѓорѓов“ во село Караслари',
+                );
+                assert.equal(
+                    roadWorks.description,
+                    'Реконструкцијата на улицата „Васил Ѓорѓов“ во с. Караслари започна на 15.11.2026 год. и ги вклучува асфалтирањето и хоризонталното бележење. Сообраќајот во зоната на работите е отежнат во периодот од 20.11.2026 до 25.11.2026 година.',
+                );
+                assert.doesNotMatch(
+                    present(roadWorks.description),
+                    /финансиски средства/iu,
+                );
+                assert.doesNotMatch(
+                    present(roadWorks.description),
+                    /континуирано вложува/iu,
+                );
+                assert.doesNotMatch(
+                    present(roadWorks.description),
+                    /ги замолува граѓаните/iu,
                 );
             });
         });
