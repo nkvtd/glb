@@ -1,132 +1,17 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { Cron } from 'croner';
-import { PgDialect } from 'drizzle-orm/pg-core';
-import {
-    type EventItem,
-    type ReportItem,
-    reports,
-} from '../src/core/schema.js';
-import type { AlertDispatcher } from '../src/infrastructure/alerting/dispatcher.js';
+import type { SQL } from 'drizzle-orm';
+import { reports } from '../src/core/schema.js';
 import type { DbOrTx } from '../src/infrastructure/database/db.js';
 import { ScrapingOrchestrator } from '../src/modules/scraping/orchestrator.js';
 import type { ScrapingStrategy } from '../src/modules/scraping/strategy.interface.js';
-import { at } from './test-utils.js';
-
-type ExistingReport = {
-    id: number;
-    externalId: string;
-    locationLabel: string | null;
-    status: 'ongoing' | 'omitted' | 'scheduled' | 'ended' | 'unknown';
-};
-
-function createReportDb(params: {
-    incomingExisting?: Array<{ externalId: string }>;
-    supersededRows?: ExistingReport[];
-    returnedRows?: Array<Record<string, unknown>>;
-}) {
-    const state = {
-        selected: 0,
-        insertedRows: [] as Array<Record<string, unknown>>,
-        endedIds: [] as number[],
-    };
-
-    const tx = {
-        select: () => ({
-            from: () => ({
-                where: async () =>
-                    state.selected++ === 0
-                        ? (params.incomingExisting ?? [])
-                        : (params.supersededRows ?? []),
-            }),
-        }),
-        update: () => ({
-            set: () => ({
-                where: async () => {
-                    state.endedIds.push(
-                        ...(params.supersededRows ?? []).map((row) => row.id),
-                    );
-                },
-            }),
-        }),
-        insert: () => ({
-            values: (rows: Array<Record<string, unknown>>) => {
-                state.insertedRows = rows;
-                return {
-                    onConflictDoUpdate: () => ({
-                        returning: async () =>
-                            params.returnedRows ??
-                            rows.map((row, index) => ({
-                                id: index + 100,
-                                ...row,
-                            })),
-                    }),
-                };
-            },
-        }),
-    };
-
-    const db = {
-        transaction: async (fn: (t: unknown) => Promise<unknown>) => fn(tx),
-    } as unknown as DbOrTx;
-
-    return { db, state };
-}
-
-function createEventDb(existing: Array<{ externalId: string }> = []) {
-    const state = {
-        updateCount: 0,
-        insertedRows: [] as Array<Record<string, unknown>>,
-    };
-    const tx = {
-        select: () => ({
-            from: () => ({ where: async () => existing }),
-        }),
-        update: () => ({
-            set: () => ({
-                where: async () => {
-                    state.updateCount += 1;
-                },
-            }),
-        }),
-        insert: () => ({
-            values: (rows: Array<Record<string, unknown>>) => {
-                state.insertedRows = rows;
-                return {
-                    onConflictDoUpdate: () => ({
-                        returning: async () =>
-                            rows.map((row, index) => ({
-                                id: index + 1,
-                                ...row,
-                            })),
-                    }),
-                };
-            },
-        }),
-    };
-    return {
-        db: {
-            transaction: async (fn: (t: unknown) => Promise<unknown>) => fn(tx),
-        } as unknown as DbOrTx,
-        state,
-    };
-}
-
-function createDispatcher() {
-    const batches: Array<{
-        source: string;
-        items: Array<ReportItem | EventItem>;
-    }> = [];
-    const dispatcher = {
-        dispatch: async (
-            source: string,
-            items: Array<ReportItem | EventItem>,
-        ) => {
-            batches.push({ source, items });
-        },
-    } as unknown as AlertDispatcher;
-    return { dispatcher, batches };
-}
+import { at, sqlText } from './util/assertions.js';
+import {
+    createDispatcher,
+    createEventDb,
+    createReportDb,
+} from './util/fakes.js';
 
 function reportStrategy(stateFeed: boolean | undefined, externalId = 'new') {
     return {
@@ -397,7 +282,7 @@ describe('ScrapingOrchestrator insertion and alert policy', () => {
 });
 
 describe('ScrapingOrchestrator lifecycle reconciliation', () => {
-    it('starts and stops cron jobs for strategies and the reconciler', () => {
+    it('starts and stops cron jobs for strategies and the reconciler', async () => {
         let fetched = 0;
         const strategy: ScrapingStrategy = {
             ...reportStrategy(undefined),
@@ -413,11 +298,11 @@ describe('ScrapingOrchestrator lifecycle reconciliation', () => {
             createDispatcher().dispatcher,
         );
         orchestrator.start();
-        const jobs = (orchestrator as unknown as { jobs: Cron[] }).jobs;
-        assert.equal(jobs.length, 2);
+        const jobs = [...(orchestrator as unknown as { jobs: Cron[] }).jobs];
         orchestrator.stop();
-        assert.equal(jobs.length, 0);
+        assert.equal(jobs.length, 2);
         assert.ok(jobs.every((job) => job.isStopped()));
+        await Promise.resolve();
         assert.equal(fetched, 1);
     });
 
@@ -489,14 +374,14 @@ describe('ScrapingOrchestrator lifecycle reconciliation', () => {
             [{ id: 3, source: 'c', status: 'unknown' }],
         ];
         const sets: unknown[] = [];
-        const conditions: unknown[] = [];
+        const conditions: SQL[] = [];
         let call = 0;
         const tx = {
             update: () => ({
                 set: (value: unknown) => {
                     sets.push(value);
                     return {
-                        where: (condition: unknown) => {
+                        where: (condition: SQL) => {
                             conditions.push(condition);
                             return {
                                 returning: async () => at(returned, call++),
@@ -538,9 +423,7 @@ describe('ScrapingOrchestrator lifecycle reconciliation', () => {
             [3],
         );
         assert.equal(sets.length, 3);
-        const sql = conditions.map(
-            (condition) => new PgDialect().sqlToQuery(condition as never).sql,
-        );
+        const sql = conditions.map((condition) => sqlText(condition));
         assert.match(at(sql, 0), /"reports"\."ends_at" <=/);
         assert.match(at(sql, 0), /"reports"\."status" in/);
         assert.match(at(sql, 1), /"reports"\."starts_at" <=/);

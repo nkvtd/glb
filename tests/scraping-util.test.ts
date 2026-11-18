@@ -42,28 +42,14 @@ import {
     getLocalOffset,
     parseLocalMidnight,
 } from '../src/modules/scraping/strategies/util/time.js';
+import {
+    emptyResponse,
+    jsonResponse,
+    textResponse,
+    withFetch,
+} from './util/fetch-mock.js';
 
 const numberSchema = z.object({ value: z.number() });
-
-function jsonResponse(data: unknown, status = 200): Response {
-    return new Response(JSON.stringify(data), {
-        status,
-        headers: { 'content-type': 'application/json' },
-    });
-}
-
-async function withFetchMock(
-    mock: typeof globalThis.fetch,
-    run: () => Promise<unknown>,
-): Promise<unknown> {
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = mock;
-    try {
-        return await run();
-    } finally {
-        globalThis.fetch = originalFetch;
-    }
-}
 
 function makeSeries(
     values: Array<number | null>,
@@ -97,7 +83,7 @@ describe('scraping util: http', () => {
 
     it('parses JSON and injects no default method, headers, or body', async () => {
         let capturedInit: RequestInit | undefined;
-        const result = await withFetchMock(
+        const result = await withFetch(
             (_input, init) => {
                 capturedInit = init;
                 return Promise.resolve(jsonResponse({ value: 42 }));
@@ -114,7 +100,7 @@ describe('scraping util: http', () => {
     it('forwards method, headers, and body when provided', async () => {
         let capturedInit: RequestInit | undefined;
         const body = JSON.stringify({ query: 'latest' });
-        const result = await withFetchMock(
+        const result = await withFetch(
             (_input, init) => {
                 capturedInit = init;
                 return Promise.resolve(jsonResponse({ value: 7 }));
@@ -136,11 +122,8 @@ describe('scraping util: http', () => {
 
     it('throws the upstream status code and body on non-OK responses', async () => {
         await assert.rejects(
-            withFetchMock(
-                () =>
-                    Promise.resolve(
-                        new Response('upstream down', { status: 503 }),
-                    ),
+            withFetch(
+                () => Promise.resolve(textResponse('upstream down', 503)),
                 () => fetchJson('https://example.test/data', numberSchema),
             ),
             (error: unknown) =>
@@ -156,7 +139,7 @@ describe('scraping util: http', () => {
             headers: { 'content-type': 'text/html; charset=utf-8' },
         });
         await assert.rejects(
-            withFetchMock(
+            withFetch(
                 () => Promise.resolve(htmlResponse),
                 () =>
                     fetchJson('https://example.test/data', numberSchema, {
@@ -172,7 +155,7 @@ describe('scraping util: http', () => {
 
     it('rejects when the request exceeds the timeout', async () => {
         await assert.rejects(
-            withFetchMock(
+            withFetch(
                 (_input, init) =>
                     new Promise<Response>((_resolve, reject) => {
                         const signal = init?.signal;
@@ -190,15 +173,15 @@ describe('scraping util: http', () => {
     });
 
     it('returns null on 204 No Content', async () => {
-        const result = await withFetchMock(
-            () => Promise.resolve(new Response(null, { status: 204 })),
+        const result = await withFetch(
+            () => Promise.resolve(emptyResponse()),
             () => fetchJsonOrNull('https://example.test/data', numberSchema),
         );
         assert.strictEqual(result, null);
     });
 
     it('parses JSON for non-204 responses', async () => {
-        const result = await withFetchMock(
+        const result = await withFetch(
             () => Promise.resolve(jsonResponse({ value: 3 })),
             () => fetchJsonOrNull('https://example.test/data', numberSchema),
         );
