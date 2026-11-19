@@ -37,9 +37,13 @@ const LAB_REPORT_RE =
     /извештај|тестирање|анализа\s+на\s+вода|безбедност\s+на\s+водата/iu;
 
 const CLOSED_RE =
-    /нормализиран|завршен|пуштен|поставени|укината|укинува|се\s+укинува|безбедна/iu;
+    /нормализиран|завршен|пуштен|поставени|укината|укинува(?!\p{L})|се\s+укинува|безбедна/iu;
 
 const GENERIC_TITLE_RE = /^(?:известување|соопштение)\.?$/iu;
+
+const OPEN_ENDED_BAN_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+const UNDATED_WATER_TTL_MS = 3 * 24 * 60 * 60 * 1000;
+const UNDATED_ROAD_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 const CATEGORY_TITLES: Record<'water' | 'road', string> = {
     water: 'Известување за водоснабдување',
@@ -222,6 +226,7 @@ export class OpstinaVelesStrategy
     ): EventWindow {
         const combined = `${title} ${body}`;
         const isClosed = CLOSED_RE.test(combined);
+        const ageMs = now.getTime() - publishDate.getTime();
 
         const window =
             this.parseMultiDayWindow(body) ?? this.parseSingleDayWindow(body);
@@ -239,13 +244,24 @@ export class OpstinaVelesStrategy
         }
 
         if (OPEN_ENDED_BAN_RE.test(combined)) {
-            return { startsAt: publishDate, endsAt: null, status: 'ongoing' };
+            return {
+                startsAt: publishDate,
+                endsAt: null,
+                status:
+                    isClosed || ageMs > OPEN_ENDED_BAN_TTL_MS
+                        ? 'ended'
+                        : 'ongoing',
+            };
         }
 
+        const ttlMs =
+            this.category === 'road'
+                ? UNDATED_ROAD_TTL_MS
+                : UNDATED_WATER_TTL_MS;
         return {
             startsAt: publishDate,
             endsAt: null,
-            status: isClosed ? 'ended' : 'ongoing',
+            status: isClosed || ageMs > ttlMs ? 'ended' : 'ongoing',
         };
     }
 

@@ -1496,6 +1496,91 @@ describe('OpstinaVelesStrategy', () => {
                 );
             });
         });
+
+        it('age-gates open-ended bans and undated notices at their TTL boundaries', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const makePost = (
+                    id: number,
+                    dateGmt: string,
+                    body: string,
+                ) => ({
+                    id,
+                    date: dateGmt,
+                    date_gmt: dateGmt,
+                    link: `https://www.veles.gov.mk/ttl-${id}/`,
+                    title: { rendered: 'ИЗВЕСТУВАЊЕ' },
+                    content: { rendered: body },
+                });
+                const banBody =
+                    '<p>Информираме дека водата не е за пиење сè до укинување на забраната поради хидрантска интервенција во с. Раштани. Со почит, Општина Велес</p>';
+                const undatedWaterBody =
+                    '<p>Поради реконструкција на водоводната мрежа на ул. Јане Сандански, водоснабдувањето ќе биде отежнато.</p>';
+                const undatedRoadBody =
+                    '<p>Започнаа градежни активности на улица Гоце Делчев и сообраќајот ќе биде отежнат во зоната на работите.</p>';
+
+                const banAtEdge = at(
+                    await waterStrategy.parse([
+                        makePost(5111, '2026-11-04T12:00:00', banBody),
+                    ]),
+                    0,
+                );
+                assert.equal(banAtEdge.status, 'ongoing');
+                assert.equal(banAtEdge.endsAt, null);
+
+                const banPastEdge = at(
+                    await waterStrategy.parse([
+                        makePost(5112, '2026-11-04T11:59:59.999', banBody),
+                    ]),
+                    0,
+                );
+                assert.equal(banPastEdge.status, 'ended');
+                assert.equal(banPastEdge.endsAt, null);
+
+                const waterAtEdge = at(
+                    await waterStrategy.parse([
+                        makePost(5113, '2026-11-15T12:00:00', undatedWaterBody),
+                    ]),
+                    0,
+                );
+                assert.equal(waterAtEdge.status, 'ongoing');
+                assert.equal(waterAtEdge.endsAt, null);
+
+                const waterPastEdge = at(
+                    await waterStrategy.parse([
+                        makePost(
+                            5114,
+                            '2026-11-15T11:59:59.999',
+                            undatedWaterBody,
+                        ),
+                    ]),
+                    0,
+                );
+                assert.equal(waterPastEdge.status, 'ended');
+                assert.equal(waterPastEdge.endsAt, null);
+
+                const roadAtEdge = at(
+                    await roadStrategy.parse([
+                        makePost(5115, '2026-11-11T12:00:00', undatedRoadBody),
+                    ]),
+                    0,
+                );
+                assert.equal(roadAtEdge.status, 'ongoing');
+                assert.equal(roadAtEdge.endsAt, null);
+
+                const roadPastEdge = at(
+                    await roadStrategy.parse([
+                        makePost(
+                            5116,
+                            '2026-11-11T11:59:59.999',
+                            undatedRoadBody,
+                        ),
+                    ]),
+                    0,
+                );
+                assert.equal(roadPastEdge.status, 'ended');
+                assert.equal(roadPastEdge.endsAt, null);
+            });
+        });
     });
 });
 
