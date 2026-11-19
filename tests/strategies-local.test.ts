@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import { vodovodSkopjeResponseSchema } from '../src/core/validation/vodovod-skopje.js';
 import { EvnStrategy } from '../src/modules/scraping/strategies/evn.strategy.js';
 import { MeteoalarmStrategy } from '../src/modules/scraping/strategies/meteoalarm.strategy.js';
+import { OpstinaDebrcaStrategy } from '../src/modules/scraping/strategies/opstina-debrca.strategy.js';
 import { OpstinaVelesStrategy } from '../src/modules/scraping/strategies/opstina-veles.strategy.js';
 import { VodovodKumanovoStrategy } from '../src/modules/scraping/strategies/vodovod-kumanovo.strategy.js';
 import { VodovodPrilepStrategy } from '../src/modules/scraping/strategies/vodovod-prilep.strategy.js';
@@ -14,7 +15,13 @@ import {
     createStandardFakeResolver,
 } from './util/fakes.js';
 import { jsonResponse, textResponse, withFetch } from './util/fetch-mock.js';
-import { alert, kumanovoPost, prilepPost, velesPost } from './util/fixtures.js';
+import {
+    alert,
+    debrcaPost,
+    kumanovoPost,
+    prilepPost,
+    velesPost,
+} from './util/fixtures.js';
 
 const resolver = createStandardFakeResolver();
 
@@ -940,10 +947,8 @@ describe('OpstinaVelesStrategy', () => {
                 assert.equal(parsed.length, 2);
 
                 const ban = at(parsed, 0);
-                assert.equal(
-                    ban.title,
-                    'Известување за водоснабдување: Раштани',
-                );
+                assert.equal(ban.title, 'Забрана за вода за пиење: Раштани');
+                assert.equal(ban.rawPayload.title, 'ИЗВЕСТУВАЊЕ');
                 assert.equal(ban.locationLabel, 'Раштани, Велес');
                 assert.equal(ban.status, 'ongoing');
                 assert.equal(ban.endsAt, null);
@@ -964,7 +969,7 @@ describe('OpstinaVelesStrategy', () => {
                 const works = at(parsed, 1);
                 assert.equal(
                     works.title,
-                    'Известување за водоснабдување: ул. Јане Сандански',
+                    'Реконструкција на водоводна мрежа: ул. Јане Сандански',
                 );
                 assert.equal(works.status, 'scheduled');
                 assert.equal(
@@ -1012,7 +1017,7 @@ describe('OpstinaVelesStrategy', () => {
                 const regime = at(parsed, 0);
                 assert.equal(
                     regime.title,
-                    'Сообраќајно известување: ул. Партизанска',
+                    'Времен режим на сообраќај: ул. Партизанска',
                 );
                 assert.equal(regime.locationLabel, 'ул. Партизанска, Велес');
                 assert.equal(regime.status, 'scheduled');
@@ -1028,7 +1033,7 @@ describe('OpstinaVelesStrategy', () => {
                 const undated = at(parsed, 1);
                 assert.equal(
                     undated.title,
-                    'Градежни активности на патната мрежа во Велес',
+                    'Реконструкција на улица: улица Гоце Делчев',
                 );
                 assert.equal(undated.locationLabel, 'улица Гоце Делчев, Велес');
                 assert.equal(undated.status, 'ongoing');
@@ -1133,14 +1138,17 @@ describe('OpstinaVelesStrategy', () => {
 
                 const pothole = at(parsed, 0);
                 assert.equal(pothole.category, 'road');
-                assert.equal(pothole.title, 'Дупка на коловозот');
+                assert.equal(
+                    pothole.title,
+                    'Сообраќајно известување: ул. Партизанска',
+                );
                 assert.equal(pothole.locationLabel, 'ул. Партизанска, Велес');
                 assert.equal(pothole.status, 'ongoing');
 
                 const marking = at(parsed, 1);
                 assert.equal(
                     marking.title,
-                    'Хоризонтално белење на улиците низ градот',
+                    'Хоризонтално бележење на улици: Велес',
                 );
                 assert.equal(marking.locationLabel, 'Велес');
                 assert.equal(marking.status, 'scheduled');
@@ -1202,7 +1210,10 @@ describe('OpstinaVelesStrategy', () => {
                 assert.equal(waterParsed.length, 2);
 
                 const svStreet = at(waterParsed, 0);
-                assert.equal(svStreet.title, 'ул. Св. Кирил и Методиј');
+                assert.equal(
+                    svStreet.title,
+                    'Реконструкција на водоводна мрежа: ул. Св. Кирил и Методиј',
+                );
                 assert.equal(
                     svStreet.locationLabel,
                     'ул. Св. Кирил и Методиј, Велес',
@@ -1317,10 +1328,7 @@ describe('OpstinaVelesStrategy', () => {
                 assert.equal(parsed.length, 1);
 
                 const boilerplate = at(parsed, 0);
-                assert.equal(
-                    boilerplate.title,
-                    'Известување за водоснабдување: Велес',
-                );
+                assert.equal(boilerplate.title, 'Водоснабдување: Велес');
                 assert.equal(boilerplate.locationLabel, 'Велес');
             });
         });
@@ -1406,7 +1414,7 @@ describe('OpstinaVelesStrategy', () => {
             });
         });
 
-        it('restores proper-noun casing in all-caps titles and strips PR boilerplate from descriptions', async () => {
+        it('formats subject-plus-location titles and strips PR boilerplate from descriptions', async () => {
             await withFrozenClock(frozenNow, async () => {
                 const waterParsed = await waterStrategy.parse([
                     {
@@ -1427,7 +1435,7 @@ describe('OpstinaVelesStrategy', () => {
                 assert.equal(waterParsed.length, 1);
                 assert.equal(
                     at(waterParsed, 0).title,
-                    'Реконструкција на водоводната линија во село Караслари',
+                    'Реконструкција на водоводна мрежа: Караслари',
                 );
 
                 const roadParsed = await roadStrategy.parse([
@@ -1470,13 +1478,17 @@ describe('OpstinaVelesStrategy', () => {
                 assert.equal(roadParsed.length, 2);
                 assert.equal(
                     at(roadParsed, 0).title,
-                    'Реконструкција на улица во село Горно Оризари',
+                    'Реконструкција на улица: Горно Оризари',
                 );
 
                 const roadWorks = at(roadParsed, 1);
                 assert.equal(
                     roadWorks.title,
-                    'Реконструкција на улица „Васил Ѓорѓов“ во село Караслари',
+                    'Реконструкција на улица: Улица Васил Ѓорѓов',
+                );
+                assert.equal(
+                    roadWorks.rawPayload.title,
+                    'РЕКОНСТРУКЦИЈА НА УЛИЦА „ВАСИЛ ЃОРЃОВ“ ВО СЕЛО КАРАСЛАРИ',
                 );
                 assert.equal(
                     roadWorks.description,
@@ -1579,6 +1591,520 @@ describe('OpstinaVelesStrategy', () => {
                 );
                 assert.equal(roadPastEdge.status, 'ended');
                 assert.equal(roadPastEdge.endsAt, null);
+            });
+        });
+    });
+});
+
+describe('OpstinaDebrcaStrategy', () => {
+    const strategy = new OpstinaDebrcaStrategy(
+        'https://debrca.test/wp-json/wp/v2/posts',
+        '*/30 * * * *',
+    );
+
+    describe('fetch()', () => {
+        it('fetches and validates the upstream payload', async () => {
+            await withFetch(
+                async () => jsonResponse([debrcaPost]),
+                async () => {
+                    const result = await strategy.fetch();
+                    assert.ok(Array.isArray(result));
+                },
+            );
+        });
+
+        it('rejects non-OK responses', async () => {
+            await withFetch(
+                async () => textResponse('provider error', 500),
+                async () => {
+                    await assert.rejects(
+                        strategy.fetch(),
+                        /Fetch failed with status code 500: provider error/,
+                    );
+                },
+            );
+        });
+    });
+
+    describe('parse()', () => {
+        it('maps turbidity and do-not-drink warnings onto ongoing open-ended reports', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const parsed = await strategy.parse([
+                    debrcaPost,
+                    {
+                        id: 10306,
+                        date: '2026-11-16T17:12:42',
+                        date_gmt: '2026-11-16T15:12:42',
+                        link: 'https://debrca.gov.mk/izvestuvanje-matnost-trebenishta/',
+                        title: {
+                            rendered:
+                                'Известување Поради појава на матност во водоводната мрежа во с.Требеништа водата да не се користи за пиење до стабилизирање на состојбата',
+                        },
+                        content: {
+                            rendered:
+                                '<p>Известување<br />\nПоради појава на матност во водоводната мрежа во с.Требеништа водата да не се користи за пиење до стабилизирање на состојбата.<br />\nЕкипите на Јп превземаат активности за детектирање на матноста за што се ангажирани надворешни стручни лица &#8211; хидроинжинери за проверка на состојбата на резервоарот, изворите и водоводната мрежа.<br />\nЗа наодите од стручниот извештај ќе биде објавено известување.</p>\n',
+                        },
+                    },
+                    {
+                        id: 10266,
+                        date: '2026-11-15T14:33:52',
+                        date_gmt: '2026-11-15T12:33:52',
+                        link: 'https://debrca.gov.mk/izvestuvanje-belchishta/',
+                        title: {
+                            rendered:
+                                'Известување до населени места Белчишта, Ботун, Лешани, Ново Село, Долно и Горно Средорече, Грко Поле',
+                        },
+                        content: {
+                            rendered:
+                                '<p><span data-olk-copy-source="MessageBody">Известување до населени места Белчишта, Ботун, Лешани, Ново Село, Долно и Горно Средорече, Грко поле дека поради дефект во централата и ископи со механизација кај централата Хец Песочан поради нивни активности, има заматеност на дел од изворите во водоснабдителниот систем Караорман. До стабилизирање на состојбата не се препорачува пиење на водата</span></p>\n',
+                        },
+                    },
+                ]);
+                assert.equal(parsed.length, 3);
+
+                for (const report of parsed) {
+                    assert.equal(report.source, 'opstina-debrca');
+                    assert.equal(report.category, 'water');
+                    assert.equal(report.municipalityCode, 'MK0030400');
+                    assert.equal(report.status, 'ongoing');
+                    assert.equal(report.endsAt, null);
+                }
+
+                const turbidity = at(parsed, 0);
+                assert.equal(turbidity.externalId.length, 32);
+                assert.equal(
+                    turbidity.title,
+                    'Забрана за вода за пиење: Арбиново и Слатински Чифлик',
+                );
+                assert.equal(
+                    turbidity.rawPayload.title,
+                    'Известување до населени места Арбиново и Слатински Чифлик за заматеност за водата за пиење',
+                );
+                assert.equal(
+                    turbidity.locationLabel,
+                    'Арбиново и Слатински Чифлик, Дебрца',
+                );
+                assert.equal(
+                    turbidity.startsAt?.toISOString(),
+                    '2026-11-17T14:12:05.000Z',
+                );
+                assert.doesNotMatch(present(turbidity.description), /почит/iu);
+                assert.doesNotMatch(present(turbidity.description), /ЈКП/iu);
+                assert.deepEqual(Object.keys(turbidity.rawPayload).sort(), [
+                    'date',
+                    'dateGmt',
+                    'link',
+                    'postId',
+                    'title',
+                ]);
+
+                const trebenishta = at(parsed, 1);
+                assert.equal(
+                    trebenishta.title,
+                    'Забрана за вода за пиење: Требеништа',
+                );
+                assert.equal(trebenishta.locationLabel, 'Требеништа, Дебрца');
+                assert.equal(
+                    trebenishta.description,
+                    'Известување Поради појава на матност во водоводната мрежа во с.Требеништа водата да не се користи за пиење до стабилизирање на состојбата.',
+                );
+
+                const belchishta = at(parsed, 2);
+                assert.equal(
+                    belchishta.title,
+                    'Забрана за вода за пиење: Белчишта, Ботун, Лешани, Ново Село, Долно и Горно Средорече и Грко Поле',
+                );
+                assert.equal(
+                    belchishta.locationLabel,
+                    'Белчишта, Ботун, Лешани, Ново Село, Долно и Горно Средорече и Грко Поле, Дебрца',
+                );
+            });
+        });
+
+        it('parses pump and pipe defect outages with village lists and cleans Outlook signatures', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const parsed = await strategy.parse([
+                    {
+                        id: 10298,
+                        date: '2026-11-16T10:47:45',
+                        date_gmt: '2026-11-16T08:47:45',
+                        link: 'https://debrca.gov.mk/izvestuvanje-prekin-podmolje/',
+                        title: {
+                            rendered:
+                                'Известување за прекин во водоснабдување поради дефект на водоводна пумпна станица Св.Еразмо',
+                        },
+                        content: {
+                            rendered:
+                                '<p>Се известуваат жителите на с.Подмоље, с.Оровник, с.Горенци, с.Требеништа и с.Волино дека поради дефект на водоводна цевка ф315 ќе има намален притисок и прекин на водоснабдувањето.</p>\n<p>&nbsp;</p>\n<p>&nbsp;</p>\n<p>Со почит,</p>\n<p>&nbsp;</p>\n<p>ЈКП Дебрца</p>\n',
+                        },
+                    },
+                ]);
+                assert.equal(parsed.length, 1);
+
+                const outage = at(parsed, 0);
+                assert.equal(outage.status, 'ongoing');
+                assert.equal(outage.endsAt, null);
+                assert.equal(
+                    outage.title,
+                    'Прекин во водоснабдувањето: Подмоље, Оровник, Горенци, Требеништа и Волино',
+                );
+                assert.equal(
+                    outage.locationLabel,
+                    'Подмоље, Оровник, Горенци, Требеништа и Волино, Дебрца',
+                );
+                assert.equal(
+                    outage.description,
+                    'Се известуваат жителите на с.Подмоље, с.Оровник, с.Горенци, с.Требеништа и с.Волино дека поради дефект на водоводна цевка ф315 ќе има намален притисок и прекин на водоснабдувањето.',
+                );
+            });
+        });
+
+        it('stores water-safe lab verdicts as omitted with PDF attachments stripped', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const parsed = await strategy.parse([
+                    {
+                        id: 10336,
+                        date: '2026-10-30T13:46:08',
+                        date_gmt: '2026-10-30T12:46:08',
+                        link: 'https://debrca.gov.mk/soobshtenie-kvalitet-voda/',
+                        title: {
+                            rendered:
+                                'Соопштение за испитување на квалитетот на водата од водоводните системи за селата Волино, Горенци, Мешеишта, Оровник, Подмоље и Требеништа',
+                        },
+                        content: {
+                            rendered:
+                                '<p>Врз основа на извршените испитувања на квалитетот на водата за пиење од водоводните системи во селата Волино, Горенци, Мешеишта, Оровник, Подмоље и Требеништа и добиените лабораториски резултати, констатирано е дека водата од наведените водоводни системи е <strong>здравствено исправна и безбедна за консумирање</strong>.</p>\n<p>Граѓаните од овие населени места можат слободно да ја користат водата за пиење и за секојдневните потреби.</p>\n<p>Општина Дебрца и ЈКП Дебрца и понатаму ќе продолжат со следење и контрола на квалитетот на водата, со цел заштита на здравјето на населението.</p>\n<p>&nbsp;</p>\n<p>Прилог детални извештаи по населени места:</p>\n<p><a href="https://debrca.gov.mk/wp-content/uploads/2026/10/подмоље.pdf" target="_blank" rel="noopener">подмоље</a></p>\n<p><a href="https://debrca.gov.mk/wp-content/uploads/2026/10/требеништа.pdf" target="_blank" rel="noopener">требеништа</a></p>\n<p style="text-align: right;">Општина Дебрца</p>\n<p style="text-align: right;">ЈКП Дебрца</p>\n',
+                        },
+                    },
+                ]);
+                assert.equal(parsed.length, 1);
+
+                const verdict = at(parsed, 0);
+                assert.equal(verdict.status, 'omitted');
+                assert.equal(verdict.endsAt, null);
+                assert.equal(
+                    verdict.title,
+                    'Водата е безбедна за пиење: Волино, Горенци, Мешеишта, Оровник, Подмоље и Требеништа',
+                );
+                assert.equal(
+                    verdict.locationLabel,
+                    'Волино, Горенци, Мешеишта, Оровник, Подмоље и Требеништа, Дебрца',
+                );
+                assert.doesNotMatch(present(verdict.description), /\.pdf/iu);
+                assert.doesNotMatch(
+                    present(verdict.description),
+                    /Прилог\s+детални\s+извештаи/iu,
+                );
+                assert.match(
+                    present(verdict.description),
+                    /здравствено исправна и безбедна за консумирање\.$/,
+                );
+            });
+        });
+
+        it('parses explicit body dates into real windows with derived statuses', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const parsed = await strategy.parse([
+                    {
+                        id: 10200,
+                        date: '2026-11-05T09:00:00',
+                        date_gmt: '2026-11-05T08:00:00',
+                        link: 'https://debrca.gov.mk/prekin-mesheishta/',
+                        title: { rendered: 'Известување за саниран дефект' },
+                        content: {
+                            rendered:
+                                '<p>Прекинот во водоснабдувањето за жителите на с.Мешеишта на ден 05.11.2026 година од 08:00 до 14:00 часот е отстранет.</p>\n',
+                        },
+                    },
+                    {
+                        id: 10201,
+                        date: '2026-10-20T09:00:00',
+                        date_gmt: '2026-10-20T07:00:00',
+                        link: 'https://debrca.gov.mk/matnost-zlesti/',
+                        title: {
+                            rendered: 'Известување за заматеност на водата',
+                        },
+                        content: {
+                            rendered:
+                                '<p>ВО ПЕРИОДОТ ОД 20.10.2026 ДО 25.10.2026 година жителите на с.Злести не смеат да ја користат водата за пиење поради заматеност.</p>\n',
+                        },
+                    },
+                    {
+                        id: 10202,
+                        date: '2026-11-18T09:00:00',
+                        date_gmt: '2026-11-18T08:00:00',
+                        link: 'https://debrca.gov.mk/najava-prekin-pesochan/',
+                        title: {
+                            rendered: 'Најава на прекин во водоснабдувањето',
+                        },
+                        content: {
+                            rendered:
+                                '<p>Прекин во водоснабдувањето за жителите на с.Песочан на ден 20.11.2026 од 08:00 до 12:00 часот.</p>\n',
+                        },
+                    },
+                ]);
+                assert.equal(parsed.length, 3);
+
+                const singleDay = at(parsed, 0);
+                assert.equal(singleDay.status, 'ended');
+                assert.equal(
+                    singleDay.startsAt?.toISOString(),
+                    '2026-11-05T07:00:00.000Z',
+                );
+                assert.equal(
+                    singleDay.endsAt?.toISOString(),
+                    '2026-11-05T13:00:00.000Z',
+                );
+                assert.equal(singleDay.locationLabel, 'Мешеишта, Дебрца');
+
+                const period = at(parsed, 1);
+                assert.equal(period.status, 'ended');
+                assert.equal(
+                    period.startsAt?.toISOString(),
+                    '2026-10-19T22:00:00.000Z',
+                );
+                assert.equal(
+                    period.endsAt?.toISOString(),
+                    '2026-10-25T22:59:59.999Z',
+                );
+                assert.equal(period.locationLabel, 'Злести, Дебрца');
+
+                const upcoming = at(parsed, 2);
+                assert.equal(upcoming.status, 'scheduled');
+                assert.equal(
+                    upcoming.startsAt?.toISOString(),
+                    '2026-11-20T07:00:00.000Z',
+                );
+                assert.equal(
+                    upcoming.endsAt?.toISOString(),
+                    '2026-11-20T11:00:00.000Z',
+                );
+                assert.equal(upcoming.locationLabel, 'Песочан, Дебрца');
+            });
+        });
+
+        it('skips waste collection, fire appeals, and PR/governance noise', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const noisePosts = [
+                    {
+                        id: 10243,
+                        date: '2026-09-09T08:59:21',
+                        date_gmt: '2026-09-09T06:59:21',
+                        link: 'https://debrca.gov.mk/kanti-za-odpad/',
+                        title: {
+                            rendered:
+                                'Набавени 250 канти за комунален отпад со волумен 240л',
+                        },
+                        content: {
+                            rendered:
+                                '<p>Денес до општина Дебрца се доставени 250 канти со зафатнина од 240 литри, наменети за чистење на водоводните шахти.</p>\n',
+                        },
+                    },
+                    {
+                        id: 10325,
+                        date: '2026-10-19T08:55:44',
+                        date_gmt: '2026-10-19T06:55:44',
+                        link: 'https://debrca.gov.mk/apel-požari/',
+                        title: {
+                            rendered:
+                                'ОТВОРЕН АПЕЛ И СООПШТЕНИЕ ДО ЈАВНОСТА ПОРАДИ ОПАСНОСТА ОД ПОЖАРИ',
+                        },
+                        content: {
+                            rendered:
+                                '<p>Противпожарните екипи дејствуваат крај водоводните инсталации за да ги заштитат изворите.</p>\n',
+                        },
+                    },
+                    {
+                        id: 10294,
+                        date: '2026-10-05T09:10:24',
+                        date_gmt: '2026-10-05T07:10:24',
+                        link: 'https://debrca.gov.mk/javen-povik-upraven-odbor/',
+                        title: {
+                            rendered:
+                                'ЈАВЕН ПОВИК за избор на членови на Управен одбор на ЈПКД „Дебрца“ с.Белчишта',
+                        },
+                        content: {
+                            rendered:
+                                '<p>Советот на општина Дебрца објавува јавен повик за избор на членови на Управен одбор, задолжен и за водоводните системи.</p>\n',
+                        },
+                    },
+                    {
+                        id: 9461,
+                        date: '2026-08-04T15:03:35',
+                        date_gmt: '2026-08-04T13:03:35',
+                        link: 'https://debrca.gov.mk/novo-komunalno-vozilo/',
+                        title: {
+                            rendered: 'Набавено целосно ново комунално возило',
+                        },
+                        content: {
+                            rendered:
+                                '<p>Возилото ќе служи за одржување на водоснабдителните системи во општината.</p>\n',
+                        },
+                    },
+                    {
+                        id: 9400,
+                        date: '2026-08-04T14:50:00',
+                        date_gmt: '2026-08-04T12:50:00',
+                        link: 'https://debrca.gov.mk/nov-traktor/',
+                        title: {
+                            rendered: 'Набавен нов трактор за комунални работи',
+                        },
+                        content: {
+                            rendered:
+                                '<p>Тракторот ќе се користи за одржување на водоснабдителните системи.</p>\n',
+                        },
+                    },
+                    {
+                        id: 10309,
+                        date: '2026-10-15T07:50:29',
+                        date_gmt: '2026-10-15T05:50:29',
+                        link: 'https://debrca.gov.mk/raschistuvanje-kanali/',
+                        title: {
+                            rendered:
+                                'Интензивно се расчистуваат каналите, речните корита во општина Дебрца',
+                        },
+                        content: {
+                            rendered:
+                                '<p>Во цела општина ги чистиме каналите крај водоводната мрежа.</p>\n',
+                        },
+                    },
+                    {
+                        id: 9386,
+                        date: '2026-08-04T14:45:51',
+                        date_gmt: '2026-08-04T12:45:51',
+                        link: 'https://debrca.gov.mk/mashina-kanalizacija/',
+                        title: {
+                            rendered:
+                                'Набавена нова машина за чистење на канализациони системи',
+                        },
+                        content: {
+                            rendered:
+                                '<p>Машината е наменета за чистење и одржување на канализационите системи и водоводните шахти.</p>\n',
+                        },
+                    },
+                ];
+
+                assert.deepEqual(await strategy.parse(noisePosts), []);
+            });
+        });
+
+        it('cleans Outlook entities, strips signatures, and falls back to a municipality-wide label', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const parsed = await strategy.parse([
+                    {
+                        id: 10260,
+                        date: '2026-11-18T09:00:00',
+                        date_gmt: '2026-11-18T08:00:00',
+                        link: 'https://debrca.gov.mk/defekt-cevka/',
+                        title: {
+                            rendered: 'Известување за намален притисок',
+                        },
+                        content: {
+                            rendered:
+                                '<p>Поради дефект на водоводната цевка &#8211; ф315 ќе има намален притисок во поголемиот дел од општината.</p>\n<p>&nbsp;</p>\n<p>Со Почит,</p>\n<p>&nbsp;</p>\n<p>ЈКП ДЕБРЦА</p>\n',
+                        },
+                    },
+                ]);
+                assert.equal(parsed.length, 1);
+
+                const report = at(parsed, 0);
+                assert.equal(
+                    report.title,
+                    'Прекин во водоснабдувањето: Дебрца',
+                );
+                assert.equal(report.locationLabel, 'Дебрца');
+                assert.equal(report.status, 'ongoing');
+                assert.equal(report.endsAt, null);
+                assert.equal(
+                    report.startsAt?.toISOString(),
+                    '2026-11-18T08:00:00.000Z',
+                );
+                assert.match(present(report.description), /цевка – ф315/);
+                assert.doesNotMatch(present(report.description), /ЈКП/iu);
+            });
+        });
+
+        it('keeps open-ended bans ongoing at exactly 14d and ends them at 14d + 1ms', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const atTtl = await strategy.parse([
+                    {
+                        id: 10350,
+                        date: '2026-11-04T14:00:00',
+                        date_gmt: '2026-11-04T12:00:00',
+                        link: 'https://debrca.gov.mk/matnost-grko-pole-ban/',
+                        title: {
+                            rendered:
+                                'Известување водата да не се користи за пиење до стабилизирање на состојбата',
+                        },
+                        content: {
+                            rendered:
+                                '<p>Поради заматеност на водата, водата да не се користи за пиење до стабилизирање на состојбата.</p>\n',
+                        },
+                    },
+                ]);
+                assert.equal(at(atTtl, 0).status, 'ongoing');
+
+                const pastTtl = await strategy.parse([
+                    {
+                        id: 10351,
+                        date: '2026-11-04T13:59:59.999',
+                        date_gmt: '2026-11-04T11:59:59.999',
+                        link: 'https://debrca.gov.mk/matnost-grko-pole-ban-2/',
+                        title: {
+                            rendered:
+                                'Известување водата да не се користи за пиење до стабилизирање на состојбата',
+                        },
+                        content: {
+                            rendered:
+                                '<p>Поради заматеност на водата, водата да не се користи за пиење до стабилизирање на состојбата.</p>\n',
+                        },
+                    },
+                ]);
+                const report = at(pastTtl, 0);
+                assert.equal(report.status, 'ended');
+                assert.equal(report.endsAt, null);
+            });
+        });
+
+        it('keeps undated water outages ongoing at exactly 3d and ends them at 3d + 1ms', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const atTtl = await strategy.parse([
+                    {
+                        id: 10352,
+                        date: '2026-11-15T14:00:00',
+                        date_gmt: '2026-11-15T12:00:00',
+                        link: 'https://debrca.gov.mk/prekin-volino-ban/',
+                        title: {
+                            rendered:
+                                'Известување за намален притисок и прекин на водоснабдувањето',
+                        },
+                        content: {
+                            rendered:
+                                '<p>Поради дефект на водоводна цевка ќе има намален притисок и прекин на водоснабдувањето.</p>\n',
+                        },
+                    },
+                ]);
+                assert.equal(at(atTtl, 0).status, 'ongoing');
+
+                const pastTtl = await strategy.parse([
+                    {
+                        id: 10353,
+                        date: '2026-11-15T13:59:59.999',
+                        date_gmt: '2026-11-15T11:59:59.999',
+                        link: 'https://debrca.gov.mk/prekin-volino-ban-2/',
+                        title: {
+                            rendered:
+                                'Известување за намален притисок и прекин на водоснабдувањето',
+                        },
+                        content: {
+                            rendered:
+                                '<p>Поради дефект на водоводна цевка ќе има намален притисок и прекин на водоснабдувањето.</p>\n',
+                        },
+                    },
+                ]);
+                const report = at(pastTtl, 0);
+                assert.equal(report.status, 'ended');
+                assert.equal(report.endsAt, null);
             });
         });
     });

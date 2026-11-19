@@ -10,6 +10,7 @@ import {
     moeppStationsResponseSchema,
 } from '../src/core/validation/moepp.js';
 import { nbrmRatesResponseSchema } from '../src/core/validation/nbrm-rates.js';
+import { opstinaDebrcaResponseSchema } from '../src/core/validation/opstina-debrca.js';
 import { opstinaVelesResponseSchema } from '../src/core/validation/opstina-veles.js';
 import { sensorCommunityResponseSchema } from '../src/core/validation/sensor-community.js';
 import { vodovodKumanovoResponseSchema } from '../src/core/validation/vodovod-kumanovo.js';
@@ -19,6 +20,7 @@ import { worldFiresHotspotsResponseSchema } from '../src/core/validation/worldfi
 import { at, present } from './util/assertions.js';
 import {
     alert,
+    debrcaPost,
     emscFeature,
     fuel,
     iodaSeries,
@@ -622,5 +624,36 @@ describe('opstinaVelesResponseSchema', () => {
             ]).success,
             false,
         );
+    });
+});
+
+describe('opstinaDebrcaResponseSchema', () => {
+    it('parses WordPress posts with date_gmt', () => {
+        assert.equal(
+            at(opstinaDebrcaResponseSchema.parse([debrcaPost]), 0).id,
+            10378,
+        );
+    });
+
+    it('rejects string ids, missing date_gmt and missing content blocks', () => {
+        assert.equal(
+            opstinaDebrcaResponseSchema.safeParse([
+                { ...debrcaPost, id: '10378' },
+            ]).success,
+            false,
+        );
+        assert.equal(
+            opstinaDebrcaResponseSchema.safeParse([
+                { ...debrcaPost, date_gmt: undefined },
+            ]).success,
+            false,
+        );
+        assert.equal(
+            opstinaDebrcaResponseSchema.safeParse([
+                { ...debrcaPost, content: undefined },
+            ]).success,
+            false,
+        );
+        assert.equal(opstinaDebrcaResponseSchema.safeParse({}).success, false);
     });
 });

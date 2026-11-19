@@ -181,6 +181,21 @@ export const velesPost = {
     },
 };
 
+export const debrcaPost = {
+    id: 10378,
+    date: '2026-11-17T15:12:05',
+    date_gmt: '2026-11-17T14:12:05',
+    link: 'https://debrca.gov.mk/%d0%b8%d0%b7%d0%b2%d0%b5%d1%81%d1%82%d1%83%d0%b2%d0%b0%d1%9a%d0%b5-%d0%b4%d0%be-%d0%bd%d0%b0%d1%81%d0%b5%d0%bb%d0%b5%d0%bd%d0%b8-%d0%bc%d0%b5%d1%81%d1%82%d0%b0-%d0%b0%d1%80%d0%b1%d0%b8%d0%bd%d0%be/',
+    title: {
+        rendered:
+            'Известување до населени места Арбиново и Слатински Чифлик за заматеност за водата за пиење',
+    },
+    content: {
+        rendered:
+            '<div dir="auto" data-olk-copy-source="MessageBody">Известување до населени места Арбиново и Слатински Чифлик за заматеност за водата за пиење.</div>\n<div dir="auto"></div>\n<div dir="auto">Се известуваат жителите на с.Арбиново и с.Слатински Чифлик да не ја употребуваат водата за пиење поради појава на матност.</div>\n<div dir="auto"></div>\n<div dir="auto">Со Почит,</div>\n<div dir="auto"></div>\n<div dir="auto" style="text-align: right;">ЈКП ДЕБРЦА</div>',
+    },
+};
+
 export const worldFiresHotspot = {
     time_utc: '2026-11-08T12:08:00Z',
     lat: '42.088',
