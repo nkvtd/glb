@@ -6,12 +6,7 @@ import {
 import type { ScrapingStrategy } from '../strategy.interface.js';
 import { BROWSER_JSON_HEADERS, fetchJson } from './util/fetch.js';
 import { hashExternalId } from './util/hash.js';
-import {
-    capitalizeFirst,
-    decodeHtmlText,
-    ensurePeriod,
-    toTitleCase,
-} from './util/text.js';
+import { decodeHtmlText, ensurePeriod, toTitleCase } from './util/text.js';
 import {
     buildLocalWindow,
     deriveLifecycleStatus,
@@ -39,55 +34,14 @@ const LAB_REPORT_RE =
 const CLOSED_RE =
     /нормализиран|завршен|пуштен|поставени|укината|укинува(?!\p{L})|се\s+укинува|безбедна/iu;
 
-const GENERIC_TITLE_RE = /^(?:известување|соопштение)\.?$/iu;
-
 const OPEN_ENDED_BAN_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 const UNDATED_WATER_TTL_MS = 3 * 24 * 60 * 60 * 1000;
 const UNDATED_ROAD_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-
-const CATEGORY_TITLES: Record<'water' | 'road', string> = {
-    water: 'Известување за водоснабдување',
-    road: 'Сообраќајно известување',
-};
 
 const LOCATION_RE =
     /((?:ул\.|улица(?!\s+во\s+село)|бул\.|булевар|нс\.|населба|с\.|село|селото|селата|трафостаница)\s+(?:Св\.|[^,.;:()–—])+?(?=\s+(?:е|ќе|во|од|за|до|поради|со|и)(?=\s|$)|[,.;:()–—]|$)|Акумулација\s+Младост|Езеро\s+Младост|река(?:та)?\s+Вардар|Бабуна|Тополка)/iu;
 
 const LOCATION_STOP_WORDS_RE = /^(?:е|ќе|во|од|за|до|поради|со|и|низ)$/iu;
-
-const MID_SENTENCE_CAPITALIZED_RE = /(?<=\s|„|“|"|\(|–|-)\p{Lu}\p{Ll}+/gu;
-
-const LOCATION_WORD_RE = /\p{Lu}\p{Ll}+/gu;
-
-const PROPER_NOUN_STOP_WORDS = new Set([
-    'во',
-    'ги',
-    'до',
-    'за',
-    'из',
-    'низ',
-    'на',
-    'но',
-    'од',
-    'по',
-    'при',
-    'со',
-    'се',
-    'или',
-    'ул',
-    'бул',
-    'нс',
-    'улица',
-    'село',
-    'селото',
-    'селата',
-    'булевар',
-    'населба',
-    'трафостаница',
-    'акумулација',
-    'езеро',
-    'река',
-]);
 
 const SENTENCE_SPLIT_RE =
     /(?<=[.!?])(?<!(?<!\p{L})(?:ул|с|бр|г|год|св|т\.н)[.!?])\s+/iu;
@@ -172,15 +126,16 @@ export class OpstinaVelesStrategy
             if (this.classifyPost(title, body) !== this.category) continue;
 
             const location = this.extractLocation(title, body);
+            const locationLabel = this.formatLocationLabel(location);
 
             results.push({
                 externalId: hashExternalId(post.id),
                 source: this.source,
                 category: this.category,
-                title: this.formatTitle(title, location, body),
+                title: this.formatTitle(title, body, location ?? 'Велес'),
                 description: this.formatDescription(title, body),
                 municipalityCode: VELES_MUNICIPALITY_CODE,
-                locationLabel: this.formatLocationLabel(location),
+                locationLabel,
                 ...this.parseEventWindow(title, body, publishDate, now),
                 observedAt: now,
                 rawPayload: {
@@ -391,49 +346,39 @@ export class OpstinaVelesStrategy
             : `${normalized}, Велес`;
     }
 
-    private formatTitle(
-        postTitle: string,
-        location: string | null,
-        body: string,
-    ): string {
-        const trimmed = postTitle.trim();
-        if (!trimmed || GENERIC_TITLE_RE.test(trimmed)) {
-            return `${CATEGORY_TITLES[this.category]}: ${location ?? 'Велес'}`;
-        }
+    private formatTitle(title: string, body: string, location: string): string {
+        const combined = `${title} ${body}`;
 
-        if (trimmed !== trimmed.toUpperCase()) {
-            return trimmed;
-        }
-
-        const properNouns = this.collectProperNouns(location, body);
-        return capitalizeFirst(
-            trimmed
-                .toLowerCase()
-                .replace(/\p{L}+/gu, (word) => properNouns.get(word) ?? word),
-        );
-    }
-
-    private collectProperNouns(
-        location: string | null,
-        body: string,
-    ): Map<string, string> {
-        const properNouns = new Map<string, string>();
-        const add = (word: string): void => {
-            const key = word.toLowerCase();
-            if (!PROPER_NOUN_STOP_WORDS.has(key)) {
-                properNouns.set(key, word);
+        if (this.category === 'water') {
+            if (OPEN_ENDED_BAN_RE.test(combined)) {
+                return `Забрана за вода за пиење: ${location}`;
             }
-        };
-
-        for (const word of body.match(MID_SENTENCE_CAPITALIZED_RE) ?? []) {
-            add(word);
+            if (/прекин/iu.test(combined)) {
+                return `Прекин во водоснабдувањето: ${location}`;
+            }
+            if (/реконструкција/iu.test(combined)) {
+                return `Реконструкција на водоводна мрежа: ${location}`;
+            }
+            return `Водоснабдување: ${location}`;
         }
-        for (const word of (location ?? '').match(LOCATION_WORD_RE) ?? []) {
-            add(word);
-        }
-        add('Велес');
 
-        return properNouns;
+        if (/времен\s+режим|прекинат\s+сообраќај|затворен/iu.test(combined)) {
+            return `Времен режим на сообраќај: ${location}`;
+        }
+        if (
+            /хоризонтално\s+бел|бел(?:ење|ежење)\s+на\s+хоризонтална/iu.test(
+                combined,
+            )
+        ) {
+            return `Хоризонтално бележење на улици: ${location}`;
+        }
+        if (/лежечки\s+полицајци/iu.test(combined)) {
+            return `Поставена сообраќајна сигнализација: ${location}`;
+        }
+        if (/реконструкција|асфалт|градежни\s+активности/iu.test(combined)) {
+            return `Реконструкција на улица: ${location}`;
+        }
+        return `Сообраќајно известување: ${location}`;
     }
 
     private formatDescription(title: string, body: string): string {
