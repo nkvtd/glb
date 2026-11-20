@@ -22,6 +22,28 @@ export function ensurePeriod(text: string): string {
     return `${stripped}.`;
 }
 
+const SENTENCE_SPLIT_RE =
+    /(?<=[.!?])(?<!(?<!\p{L})(?:ул|с|бр|г|год|св|т\.н)[.!?])\s+/iu;
+
+export function splitSentences(text: string): string[] {
+    return text
+        .split(SENTENCE_SPLIT_RE)
+        .map((sentence) => sentence.trim())
+        .filter(Boolean);
+}
+
+export function formatSummarySentences(sentences: readonly string[]): string {
+    const [first = '', second] = sentences;
+    const selected =
+        second !== undefined &&
+        `${first} ${second}`.length > 280 &&
+        first.length >= 40
+            ? [first]
+            : sentences.slice(0, 2);
+
+    return ensurePeriod(selected.join(' '));
+}
+
 export function formatDecimalComma(value: number, decimals: number): string {
     return value.toFixed(decimals).replace('.', ',');
 }

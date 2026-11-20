@@ -6,12 +6,17 @@ import {
 import type { ScrapingStrategy } from '../strategy.interface.js';
 import { BROWSER_JSON_HEADERS, fetchJson } from './util/fetch.js';
 import { hashExternalId } from './util/hash.js';
-import { decodeHtmlText, ensurePeriod, toTitleCase } from './util/text.js';
+import {
+    decodeHtmlText,
+    formatSummarySentences,
+    splitSentences,
+    toTitleCase,
+} from './util/text.js';
 import {
     buildLocalWindow,
     deriveLifecycleStatus,
-    extractIsoDay,
-    parseLocalMidnight,
+    formatIsoDay,
+    parseWordPressPublishDate,
 } from './util/time.js';
 
 const VELES_MUNICIPALITY_CODE = 'MK0010100';
@@ -42,9 +47,6 @@ const LOCATION_RE =
     /((?:ул\.|улица(?!\s+во\s+село)|бул\.|булевар|нс\.|населба|с\.|село|селото|селата|трафостаница)\s+(?:Св\.|[^,.;:()–—])+?(?=\s+(?:е|ќе|во|од|за|до|поради|со|и)(?=\s|$)|[,.;:()–—]|$)|Акумулација\s+Младост|Езеро\s+Младост|река(?:та)?\s+Вардар|Бабуна|Тополка)/iu;
 
 const LOCATION_STOP_WORDS_RE = /^(?:е|ќе|во|од|за|до|поради|со|и|низ)$/iu;
-
-const SENTENCE_SPLIT_RE =
-    /(?<=[.!?])(?<!(?<!\p{L})(?:ул|с|бр|г|год|св|т\.н)[.!?])\s+/iu;
 
 const PR_SENTENCE_RE =
     /^(?:Општина\s+Велес\s+(?:континуирано|ги\s+замолува|продолжува)|Со\s+(?:оваа|овие\s+активности|реконструкцијата\s+на)|Реконструкцијата\s+се\s+реализираше)/iu;
@@ -81,12 +83,6 @@ type EventWindow = {
     status: OpstinaVelesReportInsert['status'];
 };
 
-const pad2 = (value: number) => String(value).padStart(2, '0');
-
-function formatIsoDay(year: string, month: string, day: string): string {
-    return `${year}-${pad2(Number(month))}-${pad2(Number(day))}`;
-}
-
 export class OpstinaVelesStrategy
     implements ScrapingStrategy<OpstinaVelesItem[], OpstinaVelesReportInsert>
 {
@@ -116,7 +112,7 @@ export class OpstinaVelesStrategy
         const results: OpstinaVelesReportInsert[] = [];
 
         for (const post of posts) {
-            const publishDate = this.parsePublishDate(post);
+            const publishDate = parseWordPressPublishDate(post);
             if (!publishDate) continue;
 
             const title = this.cleanText(post.title.rendered);
@@ -149,17 +145,6 @@ export class OpstinaVelesStrategy
         }
 
         return results;
-    }
-
-    private parsePublishDate(post: OpstinaVelesItem): Date | null {
-        const gmtDate = new Date(`${post.date_gmt.trim()}Z`);
-        if (!Number.isNaN(gmtDate.getTime())) return gmtDate;
-
-        const day = extractIsoDay(post.date);
-        if (!day) return null;
-
-        const localDate = parseLocalMidnight(day);
-        return Number.isNaN(localDate.getTime()) ? null : localDate;
     }
 
     private classifyPost(title: string, body: string): 'water' | 'road' | null {
@@ -386,25 +371,14 @@ export class OpstinaVelesStrategy
                 .replace(/\s*Со\s+почит,?\s*Општина\s+Велес\s*\.?\s*$/iu, '')
                 .trim() || title.trim();
 
-        const sentences = prose
-            .split(SENTENCE_SPLIT_RE)
-            .map((sentence) => sentence.trim())
-            .filter(Boolean);
+        const sentences = splitSentences(prose);
         const informative = sentences.filter(
             (sentence) => !PR_SENTENCE_RE.test(sentence),
         );
         const pool =
             informative.length > 0 ? informative : [sentences.at(0) ?? ''];
 
-        const [first = '', second] = pool;
-        const selected =
-            second !== undefined &&
-            `${first} ${second}`.length > 280 &&
-            first.length >= 40
-                ? [first]
-                : pool.slice(0, 2);
-
-        return ensurePeriod(selected.join(' '));
+        return formatSummarySentences(pool);
     }
 
     private cleanText(raw: string): string {

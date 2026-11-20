@@ -6,12 +6,16 @@ import {
 import type { ScrapingStrategy } from '../strategy.interface.js';
 import { BROWSER_JSON_HEADERS, fetchJson } from './util/fetch.js';
 import { hashExternalId } from './util/hash.js';
-import { decodeHtmlText, ensurePeriod } from './util/text.js';
+import {
+    decodeHtmlText,
+    formatSummarySentences,
+    splitSentences,
+} from './util/text.js';
 import {
     buildLocalWindow,
     deriveLifecycleStatus,
-    extractIsoDay,
-    parseLocalMidnight,
+    formatIsoDay,
+    parseWordPressPublishDate,
 } from './util/time.js';
 
 const DEBRCA_MUNICIPALITY_CODE = 'MK0030400';
@@ -43,9 +47,6 @@ const LOCATION_ANCHOR_RE = /(?:населени\s+места|за\s+селата
 const PREFIXED_VILLAGE_RE =
     /(?:с\.|село|селото|селата)\s*(\p{Lu}\p{Ll}+(?:\s+\p{Lu}\p{Ll}+)*)/gu;
 
-const SENTENCE_SPLIT_RE =
-    /(?<=[.!?])(?<!(?<!\p{L})(?:ул|с|бр|г|год|св|т\.н)[.!?])\s+/iu;
-
 const MULTI_DAY_PERIOD_RE =
     /(?:во\s+период(?:от)?\s+)?од\s+(\d{1,2})\.(\d{1,2})\.(\d{4})(?:\s*г(?:од(?:ина|\.)?)?)?\s*до\s+(\d{1,2})\.(\d{1,2})\.(\d{4})(?:\s*г(?:од(?:ина|\.)?)?)?/iu;
 
@@ -59,12 +60,6 @@ type EventWindow = {
     endsAt: Date | null;
     status: OpstinaDebrcaReportInsert['status'];
 };
-
-const pad2 = (value: number) => String(value).padStart(2, '0');
-
-function formatIsoDay(year: string, month: string, day: string): string {
-    return `${year}-${pad2(Number(month))}-${pad2(Number(day))}`;
-}
 
 export class OpstinaDebrcaStrategy
     implements ScrapingStrategy<OpstinaDebrcaItem[], OpstinaDebrcaReportInsert>
@@ -93,7 +88,7 @@ export class OpstinaDebrcaStrategy
         const results: OpstinaDebrcaReportInsert[] = [];
 
         for (const post of posts) {
-            const publishDate = this.parsePublishDate(post);
+            const publishDate = parseWordPressPublishDate(post);
             if (!publishDate) continue;
 
             const title = this.cleanText(post.title.rendered);
@@ -131,17 +126,6 @@ export class OpstinaDebrcaStrategy
         }
 
         return results;
-    }
-
-    private parsePublishDate(post: OpstinaDebrcaItem): Date | null {
-        const gmtDate = new Date(`${post.date_gmt.trim()}Z`);
-        if (!Number.isNaN(gmtDate.getTime())) return gmtDate;
-
-        const day = extractIsoDay(post.date);
-        if (!day) return null;
-
-        const localDate = parseLocalMidnight(day);
-        return Number.isNaN(localDate.getTime()) ? null : localDate;
     }
 
     private parseEventWindow(
@@ -336,20 +320,7 @@ export class OpstinaDebrcaStrategy
                 .replace(SIGNATURE_TAIL_RE, '')
                 .trim() || title.trim();
 
-        const sentences = prose
-            .split(SENTENCE_SPLIT_RE)
-            .map((sentence) => sentence.trim())
-            .filter(Boolean);
-
-        const [first = '', second] = sentences;
-        const selected =
-            second !== undefined &&
-            `${first} ${second}`.length > 280 &&
-            first.length >= 40
-                ? [first]
-                : sentences.slice(0, 2);
-
-        return ensurePeriod(selected.join(' '));
+        return formatSummarySentences(splitSentences(prose));
     }
 
     private cleanText(raw: string): string {

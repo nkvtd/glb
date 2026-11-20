@@ -31,6 +31,8 @@ import {
     ensurePeriod,
     formatDecimalComma,
     formatPercentComma,
+    formatSummarySentences,
+    splitSentences,
     toTitleCase,
 } from '../src/modules/scraping/strategies/util/text.js';
 import {
@@ -38,9 +40,11 @@ import {
     deriveLifecycleStatus,
     extractIsoDay,
     floorToUtcHourIso,
+    formatIsoDay,
     formatLocalDate,
     getLocalOffset,
     parseLocalMidnight,
+    parseWordPressPublishDate,
 } from '../src/modules/scraping/strategies/util/time.js';
 import {
     emptyResponse,
@@ -240,6 +244,31 @@ describe('scraping util: time', () => {
         );
     });
 
+    it('formats ISO days with zero padding', () => {
+        assert.strictEqual(formatIsoDay('2026', '7', '5'), '2026-07-05');
+    });
+
+    it('parses WordPress publish dates with a local-midnight fallback', () => {
+        assert.strictEqual(
+            parseWordPressPublishDate({
+                date: '2026-01-15T10:00:00',
+                date_gmt: '2026-01-15T09:00:00',
+            })?.toISOString(),
+            '2026-01-15T09:00:00.000Z',
+        );
+        assert.strictEqual(
+            parseWordPressPublishDate({
+                date: '2026-01-15T10:00:00',
+                date_gmt: 'not-a-date',
+            })?.toISOString(),
+            '2026-01-14T23:00:00.000Z',
+        );
+        assert.strictEqual(
+            parseWordPressPublishDate({ date: 'nope', date_gmt: 'nope' }),
+            null,
+        );
+    });
+
     it('builds local windows with per-side offsets', () => {
         const winter = buildLocalWindow('2026-01-15', 8, 0, 14, 30);
         assert.ok(winter);
@@ -370,6 +399,47 @@ describe('scraping util: text', () => {
         assert.strictEqual(ensurePeriod('Вода без крај'), 'Вода без крај.');
         assert.strictEqual(ensurePeriod('Со точка.'), 'Со точка.');
         assert.strictEqual(ensurePeriod('Повеќе...'), 'Повеќе.');
+    });
+
+    it('splits sentences while guarding Macedonian abbreviations', () => {
+        assert.deepStrictEqual(
+            splitSentences(
+                'Во с. Ивановци и ул. Партизанска е прекин. Сообраќајот е во прекин.',
+            ),
+            [
+                'Во с. Ивановци и ул. Партизанска е прекин.',
+                'Сообраќајот е во прекин.',
+            ],
+        );
+        assert.deepStrictEqual(splitSentences('Св. Никола. Год. извештај.'), [
+            'Св. Никола.',
+            'Год. извештај.',
+        ]);
+        assert.deepStrictEqual(splitSentences('  Една.  Две. '), [
+            'Една.',
+            'Две.',
+        ]);
+    });
+
+    it('summarizes at most two sentences, dropping the second when too long', () => {
+        assert.strictEqual(
+            formatSummarySentences(['Кратка реченица.', 'Втора реченица.']),
+            'Кратка реченица. Втора реченица.',
+        );
+
+        const longFirst = 'а'.repeat(40);
+        const longSecond = 'б'.repeat(240);
+        assert.strictEqual(
+            formatSummarySentences([longFirst, longSecond]),
+            `${longFirst}.`,
+        );
+
+        const shortFirst = 'а'.repeat(20);
+        const veryLongSecond = 'б'.repeat(300);
+        assert.strictEqual(
+            formatSummarySentences([shortFirst, veryLongSecond]),
+            `${shortFirst} ${veryLongSecond}.`,
+        );
     });
 
     it('formats decimals and percents with comma separators', () => {

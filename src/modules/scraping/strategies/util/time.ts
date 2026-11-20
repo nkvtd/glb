@@ -39,6 +39,24 @@ export function parseLocalMidnight(date: string): Date {
     return new Date(`${date}T00:00:00.000${offset}`);
 }
 
+export function formatIsoDay(year: string, month: string, day: string): string {
+    return `${year}-${String(Number(month)).padStart(2, '0')}-${String(Number(day)).padStart(2, '0')}`;
+}
+
+export function parseWordPressPublishDate(post: {
+    date: string;
+    date_gmt: string;
+}): Date | null {
+    const gmtDate = new Date(`${post.date_gmt.trim()}Z`);
+    if (!Number.isNaN(gmtDate.getTime())) return gmtDate;
+
+    const day = extractIsoDay(post.date);
+    if (!day) return null;
+
+    const localDate = parseLocalMidnight(day);
+    return Number.isNaN(localDate.getTime()) ? null : localDate;
+}
+
 export function buildLocalWindow(
     day: string,
     startHour: number,
