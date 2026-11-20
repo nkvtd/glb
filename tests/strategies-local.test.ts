@@ -5,6 +5,7 @@ import { EvnStrategy } from '../src/modules/scraping/strategies/evn.strategy.js'
 import { MeteoalarmStrategy } from '../src/modules/scraping/strategies/meteoalarm.strategy.js';
 import { OpstinaDebrcaStrategy } from '../src/modules/scraping/strategies/opstina-debrca.strategy.js';
 import { OpstinaIlindenStrategy } from '../src/modules/scraping/strategies/opstina-ilinden.strategy.js';
+import { OpstinaOhridStrategy } from '../src/modules/scraping/strategies/opstina-ohrid.strategy.js';
 import { OpstinaVelesStrategy } from '../src/modules/scraping/strategies/opstina-veles.strategy.js';
 import { VodovodKumanovoStrategy } from '../src/modules/scraping/strategies/vodovod-kumanovo.strategy.js';
 import { VodovodPrilepStrategy } from '../src/modules/scraping/strategies/vodovod-prilep.strategy.js';
@@ -21,6 +22,7 @@ import {
     debrcaPost,
     ilindenPost,
     kumanovoPost,
+    ohridPost,
     prilepPost,
     velesPost,
 } from './util/fixtures.js';
@@ -2822,6 +2824,525 @@ describe('OpstinaIlindenStrategy', () => {
                 assert.doesNotMatch(description, /Трета реченица/u);
                 assert.ok(description.endsWith('.'));
                 assert.ok(description.split(/(?<=[.!?])\s+/u).length <= 2);
+            });
+        });
+    });
+});
+
+describe('OpstinaOhridStrategy', () => {
+    const waterStrategy = new OpstinaOhridStrategy(
+        'https://ohrid.test/wp-json/wp/v2/posts?categories=10',
+        '*/30 * * * *',
+        'water',
+    );
+    const roadStrategy = new OpstinaOhridStrategy(
+        'https://ohrid.test/wp-json/wp/v2/posts?categories=10',
+        '*/31 * * * *',
+        'road',
+    );
+
+    const makePost = (
+        id: number,
+        title: string,
+        body: string,
+        dateGmt = '2026-11-18T08:00:00',
+    ) => ({
+        id,
+        date: dateGmt,
+        date_gmt: dateGmt,
+        link: `https://ohrid.gov.mk/post-${id}/`,
+        title: { rendered: title },
+        content: { rendered: body },
+    });
+
+    const openicaPost = {
+        id: 46627,
+        date: '2026-11-12T17:20:14',
+        date_gmt: '2026-11-12T16:20:14',
+        link: 'https://ohrid.gov.mk/zabrana-za-koristenje-na-vodata-vo-openica/',
+        title: {
+            rendered: 'ЗАБРАНА ЗА КОРИСТЕЊЕ НА ВОДАТА ВО ОПЕНИЦА',
+        },
+        content: {
+            rendered: [
+                '<h2 class="elementor-heading-title elementor-size-default">ЗАБРАНА ЗА КОРИСТЕЊЕ НА ВОДАТА ВО ОПЕНИЦА</h2>',
+                '<p>По извршените лабораториски анализи на водата од водоснабдителниот објект – извори во село Опеница, преку ЈЗУ Центар за јавно здравје Охрид, Агенцијата за храна и ветеринарство донесе решение со кое се забранува користење на водата за пиење.</p>',
+                '<p>Констатирана е микробиолошка контаминација со присуство на E.coli и колиформни бактерии.</p>',
+                '<p>Се наредува, МЗ од Опеница да постави јасно и видливо предупредување дека <strong>ВОДАТА НЕ Е ЗА ПИЕЊЕ.</strong></p>',
+            ].join('\n'),
+        },
+    };
+
+    describe('fetch()', () => {
+        it('fetches and validates the upstream payload', async () => {
+            await withFetch(
+                async () => jsonResponse([ohridPost]),
+                async () => {
+                    const result = await waterStrategy.fetch();
+                    assert.ok(Array.isArray(result));
+                },
+            );
+        });
+
+        it('rejects non-OK responses', async () => {
+            await withFetch(
+                async () => textResponse('provider error', 500),
+                async () => {
+                    await assert.rejects(
+                        waterStrategy.fetch(),
+                        /Fetch failed with status code 500: provider error/,
+                    );
+                },
+            );
+        });
+    });
+
+    describe('parse()', () => {
+        it('maps the historical and fresh bans onto municipality-pinned open-ended reports', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const parsed = await waterStrategy.parse([
+                    openicaPost,
+                    ohridPost,
+                ]);
+                assert.equal(parsed.length, 2);
+
+                const fresh = at(parsed, 0);
+                assert.equal(fresh.source, 'opstina-ohrid-water');
+                assert.equal(fresh.category, 'water');
+                assert.equal(fresh.municipalityCode, 'MK0031000');
+                assert.equal(fresh.status, 'ongoing');
+                assert.equal(fresh.endsAt, null);
+                assert.equal(fresh.locationLabel, 'Опеница, Охрид');
+                assert.equal(fresh.title, 'Забрана за вода за пиење: Опеница');
+                assert.equal(
+                    fresh.rawPayload.title,
+                    'ЗАБРАНА ЗА КОРИСТЕЊЕ НА ВОДАТА ВО ОПЕНИЦА',
+                );
+                assert.equal(
+                    fresh.startsAt?.toISOString(),
+                    '2026-11-12T16:20:14.000Z',
+                );
+
+                const historical = at(parsed, 1);
+                assert.equal(historical.status, 'ended');
+                assert.equal(historical.endsAt, null);
+                assert.equal(historical.municipalityCode, 'MK0031000');
+                assert.equal(
+                    historical.locationLabel,
+                    'Елшани и Велестово, Охрид',
+                );
+                assert.equal(
+                    historical.title,
+                    'Забрана за вода за пиење: Елшани и Велестово',
+                );
+                assert.equal(
+                    historical.rawPayload.title,
+                    'ЗАБРАНА ЗА КОРИСТЕЊЕ НА ИЗВОРСКА ВОДА ЗА ПИЕЊЕ ВО ЕЛШАНИ И ВЕЛЕСТОВО',
+                );
+                assert.equal(
+                    historical.startsAt?.toISOString(),
+                    '2026-07-29T08:57:17.000Z',
+                );
+            });
+        });
+
+        it('keeps open-ended bans ongoing at exactly 14d and ends them at 14d + 1ms', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const makePost = (id: number, dateGmt: string) => ({
+                    id,
+                    date: dateGmt,
+                    date_gmt: dateGmt,
+                    link: `https://ohrid.gov.mk/ttl-${id}/`,
+                    title: {
+                        rendered: 'ЗАБРАНА ЗА КОРИСТЕЊЕ НА ВОДАТА ВО ОПЕНИЦА',
+                    },
+                    content: {
+                        rendered:
+                            '<p>Се забранува користење на водата за пиење. ВОДАТА НЕ Е ЗА ПИЕЊЕ.</p>',
+                    },
+                });
+
+                const atEdge = at(
+                    await waterStrategy.parse([
+                        makePost(46701, '2026-11-04T12:00:00'),
+                    ]),
+                    0,
+                );
+                assert.equal(atEdge.status, 'ongoing');
+                assert.equal(atEdge.endsAt, null);
+
+                const pastEdge = at(
+                    await waterStrategy.parse([
+                        makePost(46702, '2026-11-04T11:59:59.999'),
+                    ]),
+                    0,
+                );
+                assert.equal(pastEdge.status, 'ended');
+                assert.equal(pastEdge.endsAt, null);
+            });
+        });
+
+        it('falls back to the municipality label when the title has no location tail', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const parsed = await waterStrategy.parse([
+                    {
+                        id: 46901,
+                        date: '2026-11-16T10:00:00',
+                        date_gmt: '2026-11-16T09:00:00',
+                        link: 'https://ohrid.gov.mk/zabrana-za-koristenje-na-vodata/',
+                        title: { rendered: 'ЗАБРАНА ЗА КОРИСТЕЊЕ НА ВОДА' },
+                        content: {
+                            rendered:
+                                '<p>По извршените лабораториски анализи, донесено е решение со кое се забранува користење на водата за пиење. Се наредува да се постави предупредување дека ВОДАТА НЕ Е ЗА ПИЕЊЕ.</p>',
+                        },
+                    },
+                ]);
+                assert.equal(parsed.length, 1);
+
+                const report = at(parsed, 0);
+                assert.equal(report.status, 'ongoing');
+                assert.equal(report.locationLabel, 'Охрид');
+                assert.equal(report.title, 'Забрана за вода за пиење: Охрид');
+                assert.equal(report.endsAt, null);
+            });
+        });
+
+        it('skips traffic, contest and council noise', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const makePost = (id: number, title: string) => ({
+                    id,
+                    date: '2026-11-13T10:10:30',
+                    date_gmt: '2026-11-13T09:10:30',
+                    link: `https://ohrid.gov.mk/noise-${id}/`,
+                    title: { rendered: title },
+                    content: {
+                        rendered:
+                            '<p>Општина Охрид известува за настанот на ден 20.11.2026.</p>',
+                    },
+                });
+
+                const noise = [
+                    makePost(
+                        43462,
+                        'ВРЕМЕНА ЗАБРАНА ЗА СООБРАЌАЈ ВО СТАРИОТ ДЕЛ ОД ГРАДОТ',
+                    ),
+                    makePost(
+                        45514,
+                        'ЗАТВОРЕНА ЗА СООБРАЌАЈ ДЕЛ ОД УЛИЦАТА „7-МИ НОЕМВРИ“',
+                    ),
+                    makePost(
+                        46696,
+                        'КОНКУРС ЗА ДОДЕЛУВАЊЕ ОПШТИНСКА НАГРАДА – ПАТРОН НА ГРАДОТ „СВ. КЛИМЕНТ ОХРИДСКИ“',
+                    ),
+                    makePost(
+                        46510,
+                        'СВИКАНА ОСУМНАЕСЕТТАТА СЕДНИЦА НА СОВЕТОТ НА ОПШТИНА ОХРИД',
+                    ),
+                    makePost(
+                        43788,
+                        'ВОДАТА ВО ОХРИДСКОТО ЕЗЕРО Е БЕЗБЕДНА ЗА КАПЕЊЕ',
+                    ),
+                ];
+
+                assert.deepEqual(await waterStrategy.parse(noise), []);
+            });
+        });
+
+        it('strips Elementor chrome and caps descriptions at two sentences', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const parsed = await waterStrategy.parse([ohridPost]);
+                assert.equal(parsed.length, 1);
+
+                const report = at(parsed, 0);
+                assert.equal(
+                    report.description,
+                    'По извршените анализи на ЈЗУ "Центар за јавно здравје Охрид" од изворите во селата Елшани и Велестово, донесено е решение со кое се забранува водата да се користи за пиење. Лабораториските анализи покажеле присуство на Е.coli и Колиформни бактерии.',
+                );
+                assert.doesNotMatch(
+                    present(report.description),
+                    /<svg|<h2|&nbsp;|&#8220;|\u00a0|Најнови објави|јули 29/u,
+                );
+                assert.ok(present(report.description).endsWith('.'));
+            });
+        });
+
+        it('keeps the category gate between the water and road instances', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                assert.deepEqual(await roadStrategy.parse([openicaPost]), []);
+                assert.deepEqual(
+                    await waterStrategy.parse([
+                        makePost(
+                            45514,
+                            'ЗАТВОРЕНА ЗА СООБРАЌАЈ ДЕЛ ОД УЛИЦАТА „7-МИ НОЕМВРИ“',
+                            '<p>Од утре 18.09.2026 година ќе биде затворен дел од улицата.</p>',
+                        ),
+                    ]),
+                    [],
+                );
+            });
+        });
+    });
+
+    describe('road parse()', () => {
+        const closurePost = makePost(
+            45514,
+            'ЗАТВОРЕНА ЗА СООБРАЌАЈ ДЕЛ ОД УЛИЦАТА „7-МИ НОЕМВРИ“',
+            '<p>Се известуваат сите учесници во сообраќајот дека од утре 18.09.2026 година (петок) целосно за сообраќај ќе биде затворен дел од улицата „7-ми Ноември“ и тоа од пресекот на оваа улица со ул. „Егејска“ па се до пресекот на оваа улица со ул. „Марко Нестороски“. Времената забрана за сообраќај ќе трае до завршување на градежните работи.</p>',
+            '2026-09-17T07:07:55',
+        );
+
+        it('maps an open-ended closure onto a dated start with no end', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const parsed = await roadStrategy.parse([closurePost]);
+                assert.equal(parsed.length, 1);
+
+                const report = at(parsed, 0);
+                assert.equal(report.source, 'opstina-ohrid-road');
+                assert.equal(report.category, 'road');
+                assert.equal(report.status, 'ended');
+                assert.equal(report.municipalityCode, 'MK0031000');
+                assert.equal(
+                    report.title,
+                    'Времен режим на сообраќај: улица „7-ми Ноември“',
+                );
+                assert.equal(
+                    report.locationLabel,
+                    'улица „7-ми Ноември“, Охрид',
+                );
+                assert.equal(
+                    report.startsAt?.toISOString(),
+                    '2026-09-17T22:00:00.000Z',
+                );
+                assert.equal(report.endsAt, null);
+            });
+        });
+
+        it('parses a multi-day closure window in local time', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const parsed = await roadStrategy.parse([
+                    makePost(
+                        43872,
+                        'ИЗВЕСТУВАЊЕ ЗА ВРЕМЕНО ЗАТВОРАЊЕ НА ДЕЛ ОД УЛИЦА „СВЕТИ КЛИМЕНТОВ УНИВЕРЗИТЕТ“',
+                        '<p>Поради изведување на градежни работи за санација на дефект на канализационата мрежа, од денес 07.07.2026 година (вторник) до 13.07.2026 година (понеделник) ќе биде затворен за сообраќај дел од улицата „Свети Климентов Универзитет“ во стариот дел на градот.</p>',
+                        '2026-07-07T07:43:35',
+                    ),
+                ]);
+                assert.equal(parsed.length, 1);
+
+                const report = at(parsed, 0);
+                assert.equal(report.status, 'ended');
+                assert.equal(
+                    report.title,
+                    'Времен режим на сообраќај: улица „Свети Климентов Универзитет“',
+                );
+                assert.equal(
+                    report.startsAt?.toISOString(),
+                    '2026-07-06T22:00:00.000Z',
+                );
+                assert.equal(
+                    report.endsAt?.toISOString(),
+                    '2026-07-13T21:59:59.999Z',
+                );
+            });
+        });
+
+        it('parses a single-day closure with an hour range', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const parsed = await roadStrategy.parse([
+                    makePost(
+                        45422,
+                        'ИЗВЕСТУВАЊЕ ЗА ВРЕМЕН РЕЖИМ НА СООБРАЌАЈ',
+                        '<p>Се известуваат сите учесници во сообраќајот дека на ден 12.09.2026 година (Сабота), во периодот од 18:00 до 24:00 часот поради одржување настан „НОЌ НА МУЗЕИ : ОХРИД ГРАД – МУЗЕЈ 2026“ за сообраќај ќе биде затворен дел од ул. „Цар Самоил“ (од рампата на градскиот плоштад до крстосницата ул. „Цар Самоил“ со ул. „Коста Абраш“).</p>',
+                        '2026-09-11T08:06:43',
+                    ),
+                ]);
+                assert.equal(parsed.length, 1);
+
+                const report = at(parsed, 0);
+                assert.equal(report.status, 'ended');
+                assert.equal(
+                    report.title,
+                    'Времен режим на сообраќај: улица „Цар Самоил“',
+                );
+                assert.equal(report.locationLabel, 'улица „Цар Самоил“, Охрид');
+                assert.equal(
+                    report.startsAt?.toISOString(),
+                    '2026-09-12T16:00:00.000Z',
+                );
+                assert.equal(
+                    report.endsAt?.toISOString(),
+                    '2026-09-12T22:00:00.000Z',
+                );
+            });
+        });
+
+        it('parses a start time as the beginning of the rest of the day', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const parsed = await roadStrategy.parse([
+                    makePost(
+                        45117,
+                        'ИЗВЕСТУВАЊЕ ЗА АСФАЛТИРАЊЕ НА ДЕЛ ОД УЛИЦА „КЛЕНОЕЦ“',
+                        '<p>Општина Охрид ги известува граѓаните дека утре 20.08.2026 година (четврток), со почеток во 10:30 часот, ќе започнат работи за асфалтирање на дел од улицата „Кленоец“, од влезот на Касарната до Леарница. Делницата ќе биде затворена за сообраќај.</p>',
+                        '2026-08-19T07:38:37',
+                    ),
+                ]);
+                assert.equal(parsed.length, 1);
+
+                const report = at(parsed, 0);
+                assert.equal(report.status, 'ended');
+                assert.equal(
+                    report.title,
+                    'Реконструкција на улица: улица „Кленоец“',
+                );
+                assert.equal(
+                    report.startsAt?.toISOString(),
+                    '2026-08-20T08:30:00.000Z',
+                );
+                assert.equal(
+                    report.endsAt?.toISOString(),
+                    '2026-08-20T21:59:59.999Z',
+                );
+            });
+        });
+
+        it('classifies a generic title through the body and falls back to the publish date', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const parsed = await roadStrategy.parse([
+                    makePost(
+                        44228,
+                        'ИЗВЕСТУВАЊЕ – ВЕЛГОШТИ',
+                        '<p>Ги известуваме жителите на село Велгошти и сите оние кои гравитираат во тој дел, денес и во наредните неколку денови ќе се вршат градежни активности на патниот правец од пресекот со улицата „15ти Корпус“ до Велгошти. За таа цел Ве известуваме да бидете внимателни при движењето по оваа улица.</p>',
+                        '2026-07-21T07:19:09',
+                    ),
+                ]);
+                assert.equal(parsed.length, 1);
+
+                const report = at(parsed, 0);
+                assert.equal(report.status, 'ended');
+                assert.equal(report.title, 'Сообраќајно известување: Велгошти');
+                assert.equal(report.locationLabel, 'Велгошти, Охрид');
+                assert.equal(report.endsAt, null);
+                assert.equal(
+                    report.startsAt?.toISOString(),
+                    '2026-07-21T07:19:09.000Z',
+                );
+            });
+        });
+
+        it('maps an open-ended dated closure past the 7d TTL onto ended', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const parsed = await roadStrategy.parse([
+                    makePost(
+                        43795,
+                        'ЗАТВОРЕНА ЗА СООБРАЌАЈ ДЕЛ ОД УЛИЦАТА „КЛЕНОЕЦ“',
+                        '<p>на 03.07.2026 година (утре) ќе биде затворен за сообраќај дел од улицата „Кленоец“, на потегот од крстосницата со улица „Железничка“ до влезот на поранешната касарна. Улицата ќе биде затворена од 09:30 часот, па се до завршување на градежните активности.</p>',
+                        '2026-07-02T07:19:09',
+                    ),
+                ]);
+                assert.equal(parsed.length, 1);
+
+                const report = at(parsed, 0);
+                assert.equal(report.status, 'ended');
+                assert.equal(
+                    report.title,
+                    'Времен режим на сообраќај: улица „Кленоец“',
+                );
+                assert.equal(report.locationLabel, 'улица „Кленоец“, Охрид');
+                assert.equal(
+                    report.startsAt?.toISOString(),
+                    '2026-07-03T07:30:00.000Z',
+                );
+                assert.equal(report.endsAt, null);
+            });
+        });
+
+        it('treats a month-only restriction as undated and age-gates it', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const parsed = await roadStrategy.parse([
+                    makePost(
+                        43462,
+                        'ВРЕМЕНА ЗАБРАНА ЗА СООБРАЌАЈ ВО СТАРИОТ ДЕЛ ОД ГРАДОТ',
+                        '<p>Поради дефект на канализационата мрежа на дел од УЗ Стар град, од утре ќе има привремен режим на сообраќајот. Градежните зафати ќе бидат на дел од улицата „Климентов Универзитет“ до пресекот со улиците „Аргин Маринчев“ и „Петар Чаулев“. Сообраќајот на овој дел ќе биде забранет од 9 до 16 јуни.</p>',
+                        '2026-06-08T09:23:53',
+                    ),
+                ]);
+                assert.equal(parsed.length, 1);
+
+                const report = at(parsed, 0);
+                assert.equal(report.status, 'ended');
+                assert.equal(
+                    report.title,
+                    'Времен режим на сообраќај: улица „Климентов Универзитет“',
+                );
+                assert.equal(report.endsAt, null);
+                assert.equal(
+                    report.startsAt?.toISOString(),
+                    '2026-06-08T09:23:53.000Z',
+                );
+            });
+        });
+
+        it('age-gates undated road notices at exactly 7 days', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const body =
+                    '<p>Ќе се вршат градежни активности на патниот правец до Велгошти.</p>';
+
+                const atEdge = at(
+                    await roadStrategy.parse([
+                        makePost(
+                            9201,
+                            'ИЗВЕСТУВАЊЕ – ВЕЛГОШТИ',
+                            body,
+                            '2026-11-11T12:00:00',
+                        ),
+                    ]),
+                    0,
+                );
+                assert.equal(atEdge.status, 'ongoing');
+                assert.equal(atEdge.endsAt, null);
+
+                const pastEdge = at(
+                    await roadStrategy.parse([
+                        makePost(
+                            9202,
+                            'ИЗВЕСТУВАЊЕ – ВЕЛГОШТИ',
+                            body,
+                            '2026-11-11T11:59:59.999',
+                        ),
+                    ]),
+                    0,
+                );
+                assert.equal(pastEdge.status, 'ended');
+                assert.equal(pastEdge.endsAt, null);
+            });
+        });
+
+        it('rejects car-free days, shuttles, and enforcement notices', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const noise = [
+                    makePost(
+                        45594,
+                        'ВТОРНИК, ДЕН БЕЗ АВТОМОБИЛИ ВО ОХРИД',
+                        '<p>Утре 22.09.2026 година општина Охрид го прогласува за Ден без автомобили.</p>',
+                    ),
+                    makePost(
+                        45201,
+                        'ОРГАНИЗИРАН ПРЕВОЗ ДО СКРЕБАТНО ПО ПОВОД ПРАЗНИКОТ УСПЕНИЕ НА ПРЕСВЕТА БОГОРОДИЦА',
+                        '<p>Општина Охрид организира превоз до Скребатно.</p>',
+                    ),
+                    makePost(
+                        43843,
+                        'ИЗВЕСТУВАЊЕ ЗА ИЗВЕДУВАЊЕ НА ГРАДЕЖНИ РАБОТИ',
+                        '<p>Ќе се изведуваат градежни работи во дворот на ООУ „Христо Узунов“. Се бара од граѓаните да ги отстранат паркираните возила.</p>',
+                    ),
+                    makePost(
+                        44295,
+                        'ИЗВЕСТУВАЊЕ ЗА ОТСТРАНУВАЊЕ НА НЕЛЕГАЛНО ИЗГРАДЕНИ ГАРАЖИ',
+                        '<p>Се известуваат граѓаните за отстранување на нелегално изградени гаражи.</p>',
+                    ),
+                ];
+
+                assert.deepEqual(await roadStrategy.parse(noise), []);
             });
         });
     });

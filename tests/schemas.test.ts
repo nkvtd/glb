@@ -12,6 +12,7 @@ import {
 import { nbrmRatesResponseSchema } from '../src/core/validation/nbrm-rates.js';
 import { opstinaDebrcaResponseSchema } from '../src/core/validation/opstina-debrca.js';
 import { opstinaIlindenResponseSchema } from '../src/core/validation/opstina-ilinden.js';
+import { opstinaOhridResponseSchema } from '../src/core/validation/opstina-ohrid.js';
 import { opstinaVelesResponseSchema } from '../src/core/validation/opstina-veles.js';
 import { sensorCommunityResponseSchema } from '../src/core/validation/sensor-community.js';
 import { vodovodKumanovoResponseSchema } from '../src/core/validation/vodovod-kumanovo.js';
@@ -29,6 +30,7 @@ import {
     kumanovoPost,
     measurement,
     nbrmRate,
+    ohridPost,
     prilepPost,
     sensor,
     station,
@@ -653,6 +655,36 @@ describe('opstinaIlindenResponseSchema', () => {
         assert.equal(
             opstinaIlindenResponseSchema.safeParse([
                 { ...ilindenPost, content: undefined },
+            ]).success,
+            false,
+        );
+    });
+});
+
+describe('opstinaOhridResponseSchema', () => {
+    it('parses WordPress posts with date_gmt', () => {
+        assert.equal(
+            at(opstinaOhridResponseSchema.parse([ohridPost]), 0).id,
+            44410,
+        );
+    });
+
+    it('rejects string ids, missing date_gmt and missing content blocks', () => {
+        assert.equal(
+            opstinaOhridResponseSchema.safeParse([
+                { ...ohridPost, id: '44410' },
+            ]).success,
+            false,
+        );
+        assert.equal(
+            opstinaOhridResponseSchema.safeParse([
+                { ...ohridPost, date_gmt: undefined },
+            ]).success,
+            false,
+        );
+        assert.equal(
+            opstinaOhridResponseSchema.safeParse([
+                { ...ohridPost, content: undefined },
             ]).success,
             false,
         );

@@ -210,6 +210,37 @@ export const ilindenPost = {
     },
 };
 
+export const ohridPost = {
+    id: 44410,
+    date: '2026-07-29T10:57:17',
+    date_gmt: '2026-07-29T08:57:17',
+    link: 'https://ohrid.gov.mk/%d0%b8%d0%b7%d0%b2%d0%b5%d1%81%d1%82%d1%83%d0%b2%d0%b0%d1%9a%d0%b5-%d0%b7%d0%b0-%d0%be%d1%82%d1%81%d1%82%d1%80%d0%b0%d0%bd%d1%83%d0%b2%d0%b0%d1%9a%d0%b5-%d0%bd%d0%b0-%d0%bd%d0%b5%d0%bb%d0%b5%d0%b3-cop/',
+    title: {
+        rendered:
+            'ЗАБРАНА ЗА КОРИСТЕЊЕ НА ИЗВОРСКА ВОДА ЗА ПИЕЊЕ ВО ЕЛШАНИ И ВЕЛЕСТОВО',
+    },
+    content: {
+        rendered: [
+            '\t\t<div data-elementor-type="wp-post" data-elementor-id="44410" class="elementor elementor-44410">',
+            '\t\t\t<section class="elementor-section elementor-top-section">',
+            '\t\t\t\t<div class="elementor-widget elementor-widget-jkit_post_date"><div class="elementor-widget-container"><div class="jeg-elementor-kit jkit-post-date"><p class="post-date ">јули 29, 2026</p></div></div></div>',
+            '\t\t\t\t<div class="elementor-widget elementor-widget-icon"><div class="elementor-widget-container"><div class="elementor-icon"><svg aria-hidden="true" class="e-font-icon-svg e-far-calendar-alt" viewBox="0 0 448 512" xmlns="http://www.w3.org/2000/svg"><path d="M148 288h-40c-6.6 0-12-5.4-12-12v-40c0-6.6 5.4-12 12-12h40c6.6 0 12 5.4 12 12v40c0 6.6-5.4 12-12 12zm108-12v-40c0-6.6-5.4-12-12-12h-40c-6.6 0-12 5.4-12 12v40c0 6.6 5.4 12 12 12h40c6.6 0 12-5.4 12-12z"></path></svg></div></div></div>',
+            '\t\t\t\t<div class="elementor-widget elementor-widget-jkit_post_terms"><div class="elementor-widget-container"><div class="jeg-elementor-kit jkit-post-terms"><span class="post-terms"><span class="term-list ">ВЕСТИ</span></span></div></div></div>',
+            '\t\t\t</section>',
+            '\t\t\t<section class="elementor-section elementor-top-section">',
+            '\t\t\t\t<div class="elementor-widget elementor-widget-heading"><div class="elementor-widget-container"><h2 class="elementor-heading-title elementor-size-default">ЗАБРАНА ЗА КОРИСТЕЊЕ НА ИЗВОРСКА ВОДА ЗА ПИЕЊЕ ВО ЕЛШАНИ И ВЕЛЕСТОВО</h2></div></div>',
+            '\t\t\t\t<div class="elementor-widget elementor-widget-text-editor"><div class="elementor-widget-container"><p>По извршените анализи на ЈЗУ &#8220;Центар за јавно здравје Охрид&#8221; од изворите во селата Елшани и Велестово, донесено е решение со кое се забранува водата да се користи за пиење. Лабораториските анализи покажеле присуство на Е.coli и Колиформни бактерии.</p><p>Се задолжуваат месните заедници во Елшани и Велестово да постават јасно и видливо предупредување дека&nbsp;<strong>ВОДАТА НЕ Е ЗА ПИЕЊЕ.</strong></p></div></div>',
+            '\t\t\t</section>',
+            '\t\t\t<section class="elementor-section elementor-top-section">',
+            '\t\t\t\t<div class="elementor-widget elementor-widget-text-editor"><div class="elementor-widget-container">Tags : </div></div>',
+            '\t\t\t\t<div class="elementor-widget elementor-widget-heading"><div class="elementor-widget-container"><h2 class="elementor-heading-title elementor-size-default">Најнови објави</h2></div></div>',
+            '\t\t\t\t<p>ИЗВЕСТУВАЊЕ ЗА ИНФО ДЕН ОД ОБЛАСТА НА КУЛТУРАТА</p>',
+            '\t\t\t</section>',
+            '\t\t</div>',
+        ].join('\n'),
+    },
+};
+
 export const worldFiresHotspot = {
     time_utc: '2026-11-08T12:08:00Z',
     lat: '42.088',
