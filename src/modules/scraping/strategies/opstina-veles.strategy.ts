@@ -325,25 +325,24 @@ export class OpstinaVelesStrategy
 
         if (/Повеќе/iu.test(cleaned)) return null;
 
-        if (allCaps && /\p{L}/u.test(cleaned)) {
-            return toTitleCase(cleaned).replace(/\sИ\s/g, ' и ');
-        }
+        const cased =
+            allCaps && /\p{L}/u.test(cleaned)
+                ? toTitleCase(cleaned).replace(/\sИ\s/g, ' и ')
+                : cleaned;
 
-        return cleaned;
+        return cased.replace(
+            /^(ул\.|улица|бул\.|булевар|нс\.|населба|трафостаница|река(?:та)?)(?=\s)/iu,
+            (prefix) => prefix.toLowerCase(),
+        );
     }
 
     private formatLocationLabel(location: string | null): string {
         const trimmed = location?.trim();
         if (!trimmed) return 'Велес';
 
-        const normalized = trimmed.replace(
-            /^(ул\.|улица|бул\.|булевар|нс\.|населба|трафостаница|река(?:та)?)(?=\s)/iu,
-            (prefix) => prefix.toLowerCase(),
-        );
-
-        return /^велес$/iu.test(normalized) || /,\s*велес$/iu.test(normalized)
-            ? normalized
-            : `${normalized}, Велес`;
+        return /^велес$/iu.test(trimmed) || /,\s*велес$/iu.test(trimmed)
+            ? trimmed
+            : `${trimmed}, Велес`;
     }
 
     private formatTitle(title: string, body: string, location: string): string {
