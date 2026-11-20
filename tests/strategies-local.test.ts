@@ -4,6 +4,7 @@ import { vodovodSkopjeResponseSchema } from '../src/core/validation/vodovod-skop
 import { EvnStrategy } from '../src/modules/scraping/strategies/evn.strategy.js';
 import { MeteoalarmStrategy } from '../src/modules/scraping/strategies/meteoalarm.strategy.js';
 import { OpstinaDebrcaStrategy } from '../src/modules/scraping/strategies/opstina-debrca.strategy.js';
+import { OpstinaIlindenStrategy } from '../src/modules/scraping/strategies/opstina-ilinden.strategy.js';
 import { OpstinaVelesStrategy } from '../src/modules/scraping/strategies/opstina-veles.strategy.js';
 import { VodovodKumanovoStrategy } from '../src/modules/scraping/strategies/vodovod-kumanovo.strategy.js';
 import { VodovodPrilepStrategy } from '../src/modules/scraping/strategies/vodovod-prilep.strategy.js';
@@ -18,6 +19,7 @@ import { jsonResponse, textResponse, withFetch } from './util/fetch-mock.js';
 import {
     alert,
     debrcaPost,
+    ilindenPost,
     kumanovoPost,
     prilepPost,
     velesPost,
@@ -1484,7 +1486,7 @@ describe('OpstinaVelesStrategy', () => {
                 const roadWorks = at(roadParsed, 1);
                 assert.equal(
                     roadWorks.title,
-                    'Реконструкција на улица: Улица Васил Ѓорѓов',
+                    'Реконструкција на улица: улица Васил Ѓорѓов',
                 );
                 assert.equal(
                     roadWorks.rawPayload.title,
@@ -2459,6 +2461,367 @@ describe('MeteoalarmStrategy', () => {
                         at(translated, 0).title.startsWith(expectedTitle),
                     );
                 }
+            });
+        });
+    });
+});
+
+describe('OpstinaIlindenStrategy', () => {
+    const waterStrategy = new OpstinaIlindenStrategy(
+        'https://ilinden.test/wp-json/wp/v2/posts',
+        '*/30 * * * *',
+        'water',
+    );
+    const roadStrategy = new OpstinaIlindenStrategy(
+        'https://ilinden.test/wp-json/wp/v2/posts',
+        '*/31 * * * *',
+        'road',
+    );
+
+    const water3553 = {
+        id: 3553,
+        date: '2026-07-29T13:21:28',
+        date_gmt: '2026-07-29T11:21:28',
+        link: 'https://ilinden.gov.mk/izvestuvanje-3553/',
+        title: {
+            rendered: 'ИЗВЕСТУВАЊЕ  ЗА ПРЕКИН НА ВОДОСНАБДУВАЊЕТО',
+        },
+        content: {
+            rendered:
+                '<p>Се известуваат граѓаните од населените места Миладиновци, Бујковци, Текија и Дељадровци дека на ден 30.07.2026 година (четврток), во периодот од 05:00 до 20:00 часот, ќе останат без вода за пиење поради дислокација на дел од главниот цевковод на водоводниот систем ОКТА, која ќе ја изведува фирмата Жикол ДООЕЛ заради проширување на наплатната рампа „Миладиновци“ од страна на Јавното претпријатие за државни патишта.</p>',
+        },
+    };
+
+    const road4244 = {
+        id: 4244,
+        date: '2026-09-30T15:51:45',
+        date_gmt: '2026-09-30T13:51:45',
+        link: 'https://ilinden.gov.mk/izvestuvanje-4244/',
+        title: {
+            rendered:
+                'Известување за поставување втор асфалтен слој на улица „9“',
+        },
+        content: {
+            rendered:
+                '<p>Ве известуваме дека почнувајќи од утре 01.10.2026 година ( четврток ) и во наредните денови петок и сабота, со почеток од 9 часот ќе се изведуваат градежни работи за поставување на втор слој асфалт на улица „9“ на потегот од Халк банка до кружниот тек во Илинден.</p>\n<p><!--more--></p>\n<p>За таа цел улицата ќе биде етапно затворена за сообраќај и ќе има поставено сообраќајна сигнализација за пренасочување на сообраќајот кон алтернативни улици.</p>',
+        },
+    };
+
+    const makePost = (id: number, title: string, body: string) => ({
+        id,
+        date: '2026-11-18T09:00:00',
+        date_gmt: '2026-11-18T08:00:00',
+        link: `https://ilinden.gov.mk/post-${id}/`,
+        title: { rendered: title },
+        content: { rendered: body },
+    });
+
+    describe('fetch()', () => {
+        it('fetches and validates the upstream payload', async () => {
+            await withFetch(
+                async () => jsonResponse([ilindenPost]),
+                async () => {
+                    const result = await waterStrategy.fetch();
+                    assert.ok(Array.isArray(result));
+                },
+            );
+        });
+
+        it('rejects non-OK responses', async () => {
+            await withFetch(
+                async () => textResponse('provider error', 500),
+                async () => {
+                    await assert.rejects(
+                        waterStrategy.fetch(),
+                        /Fetch failed with status code 500/,
+                    );
+                },
+            );
+        });
+    });
+
+    describe('parse()', () => {
+        it('maps post 3785 onto a full-day ended water report', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const parsed = await waterStrategy.parse([ilindenPost]);
+                assert.equal(parsed.length, 1);
+
+                const report = at(parsed, 0);
+                assert.equal(report.source, 'opstina-ilinden-water');
+                assert.equal(report.category, 'water');
+                assert.equal(report.status, 'ended');
+                assert.equal(report.municipalityCode, 'MK0080700');
+                assert.equal(
+                    report.locationLabel,
+                    'Илинден и Пуста Кула, Илинден',
+                );
+                assert.equal(
+                    report.title,
+                    'Прекин во водоснабдувањето: Илинден и Пуста Кула',
+                );
+                assert.equal(
+                    report.rawPayload.title,
+                    'ИЗВЕСТУВАЊЕ ЗА ПРЕКИН ВО ВОДОСНАБДУВАЊЕ',
+                );
+                assert.equal(
+                    report.startsAt?.toISOString(),
+                    '2026-08-18T22:00:00.000Z',
+                );
+                assert.equal(
+                    report.endsAt?.toISOString(),
+                    '2026-08-19T21:59:59.999Z',
+                );
+            });
+        });
+
+        it('parses a timed single-day window and a settlement list', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const parsed = await waterStrategy.parse([water3553]);
+                assert.equal(parsed.length, 1);
+
+                const report = at(parsed, 0);
+                assert.equal(report.status, 'ended');
+                assert.equal(
+                    report.locationLabel,
+                    'Миладиновци, Бујковци, Текија и Дељадровци, Илинден',
+                );
+                assert.equal(
+                    report.title,
+                    'Прекин во водоснабдувањето: Миладиновци, Бујковци, Текија и Дељадровци',
+                );
+                assert.equal(
+                    report.startsAt?.toISOString(),
+                    '2026-07-30T03:00:00.000Z',
+                );
+                assert.equal(
+                    report.endsAt?.toISOString(),
+                    '2026-07-30T18:00:00.000Z',
+                );
+            });
+        });
+
+        it('spans the weekday tail after "наредните денови" for road works', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const parsed = await roadStrategy.parse([road4244]);
+                assert.equal(parsed.length, 1);
+
+                const report = at(parsed, 0);
+                assert.equal(report.source, 'opstina-ilinden-road');
+                assert.equal(report.category, 'road');
+                assert.equal(report.status, 'ended');
+                assert.equal(report.locationLabel, 'Илинден');
+                assert.equal(report.title, 'Реконструкција на улица: Илинден');
+                assert.equal(
+                    report.startsAt?.toISOString(),
+                    '2026-09-30T22:00:00.000Z',
+                );
+                assert.equal(
+                    report.endsAt?.toISOString(),
+                    '2026-10-03T21:59:59.999Z',
+                );
+            });
+        });
+
+        it('marks future-dated water notices as scheduled', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const parsed = await waterStrategy.parse([
+                    makePost(
+                        9001,
+                        'ИЗВЕСТУВАЊЕ ЗА ПРЕКИН ВО ВОДОСНАБДУВАЊЕ',
+                        '<p>Корисниците во н.м.Илинден на ден 25.12.2026 година ќе останат без вода.</p>',
+                    ),
+                ]);
+                assert.equal(parsed.length, 1);
+
+                const report = at(parsed, 0);
+                assert.equal(report.status, 'scheduled');
+                assert.equal(report.locationLabel, 'Илинден');
+                assert.equal(
+                    report.startsAt?.toISOString(),
+                    '2026-12-24T23:00:00.000Z',
+                );
+            });
+        });
+
+        it('skips municipal noise in both category instances', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const noisePosts = [
+                    makePost(
+                        3901,
+                        'Известување – терестично прскање против комарци',
+                        '<p>Ќе се изврши прскање против комарци на ден 02.09.2026 год.</p>',
+                    ),
+                    makePost(
+                        3590,
+                        'Известување &#8211; терестично прскање против комарци',
+                        '<p>Ќе се изврши прскање против комарци на ден 06.08.2026 год.</p>',
+                    ),
+                    makePost(
+                        4520,
+                        'Граѓаните на Илинден активно вклучени во креирањето на Буџетот за 2027 година',
+                        '<p>Општина Илинден го подготвува буџетот.</p>',
+                    ),
+                    makePost(
+                        4410,
+                        'Општина Илинден со нов ГИС портал',
+                        '<p>Порталот е достапен онлајн.</p>',
+                    ),
+                    makePost(
+                        3717,
+                        'ОБЈАВА за отуѓување на градежно земјиште',
+                        '<p>Објавата е достапна во прилог.</p>',
+                    ),
+                    makePost(
+                        2843,
+                        'ЈАВЕН ПОВИК ЗА ДОСТАВА НА ПОНУДИ',
+                        '<p>Општина Илинден објавува јавен повик.</p>',
+                    ),
+                    makePost(
+                        3079,
+                        'ИЗВЕСТУВАЊЕ',
+                        '<p>Јавниот повик за субвенционирање на инвертер клими се затвора.</p>',
+                    ),
+                    makePost(
+                        3541,
+                        'И годинава најуспешните спортисти ќе добијат финансиска поддршка',
+                        '<p>Општина Илинден објави јавен повик за спортисти.</p>',
+                    ),
+                    makePost(
+                        2676,
+                        'Општина Илинден објавува повик за членови на Локално собрание за млади',
+                        '<p>Рокот за аплицирање е отворен.</p>',
+                    ),
+                    makePost(
+                        2383,
+                        'Во петок ќе се одржи крводарителна акција',
+                        '<p>Акцијата ќе се одржи во Домот на култура.</p>',
+                    ),
+                    makePost(
+                        2578,
+                        'Потпишан меморандум за одржување на регионален економски саем',
+                        '<p>Меморандумот е потпишан.</p>',
+                    ),
+                    makePost(
+                        2542,
+                        'Општина Илинден објавува повик за доставување идеи, предлози и иницијативи',
+                        '<p>Предлозите се доставуваат писмено.</p>',
+                    ),
+                ];
+
+                for (const strategy of [waterStrategy, roadStrategy]) {
+                    assert.deepEqual(await strategy.parse(noisePosts), []);
+                }
+            });
+        });
+
+        it('keeps the category gate between the water and road instances', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                assert.deepEqual(await roadStrategy.parse([ilindenPost]), []);
+                assert.deepEqual(await waterStrategy.parse([road4244]), []);
+            });
+        });
+
+        it('age-gates undated notices at their category TTL boundaries', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const undatedWaterTitle =
+                    'ИЗВЕСТУВАЊЕ ЗА ПРЕКИН ВО ВОДОСНАБДУВАЊЕ';
+                const undatedWaterBody =
+                    '<p>Поради дефект на главниот цевковод, корисниците во н.м.Илинден остануваат без вода.</p>';
+                const undatedRoadTitle =
+                    'Известување за реконструкција на улица';
+                const undatedRoadBody =
+                    '<p>Сообраќајот е отежнат поради градежни работи.</p>';
+
+                const waterAtEdge = at(
+                    await waterStrategy.parse([
+                        {
+                            ...makePost(
+                                9101,
+                                undatedWaterTitle,
+                                undatedWaterBody,
+                            ),
+                            date: '2026-11-15T12:00:00',
+                            date_gmt: '2026-11-15T12:00:00',
+                        },
+                    ]),
+                    0,
+                );
+                assert.equal(waterAtEdge.status, 'ongoing');
+                assert.equal(waterAtEdge.endsAt, null);
+
+                const waterPastEdge = at(
+                    await waterStrategy.parse([
+                        {
+                            ...makePost(
+                                9102,
+                                undatedWaterTitle,
+                                undatedWaterBody,
+                            ),
+                            date: '2026-11-15T11:59:59.999',
+                            date_gmt: '2026-11-15T11:59:59.999',
+                        },
+                    ]),
+                    0,
+                );
+                assert.equal(waterPastEdge.status, 'ended');
+                assert.equal(waterPastEdge.endsAt, null);
+
+                const roadAtEdge = at(
+                    await roadStrategy.parse([
+                        {
+                            ...makePost(
+                                9103,
+                                undatedRoadTitle,
+                                undatedRoadBody,
+                            ),
+                            date: '2026-11-11T12:00:00',
+                            date_gmt: '2026-11-11T12:00:00',
+                        },
+                    ]),
+                    0,
+                );
+                assert.equal(roadAtEdge.status, 'ongoing');
+                assert.equal(roadAtEdge.endsAt, null);
+
+                const roadPastEdge = at(
+                    await roadStrategy.parse([
+                        {
+                            ...makePost(
+                                9104,
+                                undatedRoadTitle,
+                                undatedRoadBody,
+                            ),
+                            date: '2026-11-11T11:59:59.999',
+                            date_gmt: '2026-11-11T11:59:59.999',
+                        },
+                    ]),
+                    0,
+                );
+                assert.equal(roadPastEdge.status, 'ended');
+                assert.equal(roadPastEdge.endsAt, null);
+            });
+        });
+
+        it('strips HTML artifacts and caps descriptions at two sentences', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const parsed = await roadStrategy.parse([
+                    {
+                        ...road4244,
+                        content: {
+                            rendered:
+                                '<p>Поради&nbsp;работи&nbsp;на улицата сообраќајот е отежнат.\u00a0Екипите работат во наредните денови петок и сабота.</p>\n<p><!--more--></p>\n<p>Трета реченица што не треба да се појави.</p>',
+                        },
+                    },
+                ]);
+                assert.equal(parsed.length, 1);
+
+                const description = present(at(parsed, 0).description);
+                assert.doesNotMatch(description, /more/u);
+                assert.doesNotMatch(description, /\u00a0/u);
+                assert.doesNotMatch(description, /&nbsp;/u);
+                assert.doesNotMatch(description, /Трета реченица/u);
+                assert.ok(description.endsWith('.'));
+                assert.ok(description.split(/(?<=[.!?])\s+/u).length <= 2);
             });
         });
     });

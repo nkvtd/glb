@@ -12,6 +12,7 @@ import { MeteoalarmStrategy } from './modules/scraping/strategies/meteoalarm.str
 import { MoeppStrategy } from './modules/scraping/strategies/moepp.strategy.js';
 import { NbrmRatesStrategy } from './modules/scraping/strategies/nbrm-rates.strategy.js';
 import { OpstinaDebrcaStrategy } from './modules/scraping/strategies/opstina-debrca.strategy.js';
+import { OpstinaIlindenStrategy } from './modules/scraping/strategies/opstina-ilinden.strategy.js';
 import { OpstinaVelesStrategy } from './modules/scraping/strategies/opstina-veles.strategy.js';
 import { SensorCommunityStrategy } from './modules/scraping/strategies/sensor-community.strategy.js';
 import { VodovodKumanovoStrategy } from './modules/scraping/strategies/vodovod-kumanovo.strategy.js';
@@ -102,6 +103,16 @@ async function main() {
         new OpstinaDebrcaStrategy(
             'https://debrca.gov.mk/wp-json/wp/v2/posts?categories=50&per_page=20&_fields=id,date,date_gmt,link,title,content',
             '*/30 * * * *',
+        ),
+        new OpstinaIlindenStrategy(
+            'https://ilinden.gov.mk/wp-json/wp/v2/posts?categories=12&per_page=100&_fields=id,date,date_gmt,link,title,content',
+            '*/30 * * * *',
+            'water',
+        ),
+        new OpstinaIlindenStrategy(
+            'https://ilinden.gov.mk/wp-json/wp/v2/posts?categories=12&per_page=100&_fields=id,date,date_gmt,link,title,content',
+            '*/31 * * * *',
+            'road',
         ),
     ];
 
