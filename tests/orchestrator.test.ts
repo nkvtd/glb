@@ -6,14 +6,18 @@ import { reports } from '../src/core/schema.js';
 import type { DbOrTx } from '../src/infrastructure/database/db.js';
 import { ScrapingOrchestrator } from '../src/modules/scraping/orchestrator.js';
 import type { ScrapingStrategy } from '../src/modules/scraping/strategy.interface.js';
-import { at, sqlText } from './util/assertions.js';
+import { at, present, sqlText } from './util/assertions.js';
 import {
     createDispatcher,
     createEventDb,
     createReportDb,
 } from './util/fakes.js';
 
-function reportStrategy(stateFeed: boolean | undefined, externalId = 'new') {
+function reportStrategy(
+    stateFeed: boolean | undefined,
+    externalId = 'new',
+    status: 'ongoing' | 'omitted' | 'ended' = 'ongoing',
+) {
     return {
         ...(stateFeed === undefined ? {} : { stateFeed }),
         source: 'test-source',
@@ -31,7 +35,7 @@ function reportStrategy(stateFeed: boolean | undefined, externalId = 'new') {
                 description: null,
                 municipalityCode: null,
                 locationLabel: 'Same location',
-                status: 'ongoing',
+                status,
                 observedAt: new Date(),
                 startsAt: new Date(),
                 endsAt: null,
@@ -40,7 +44,11 @@ function reportStrategy(stateFeed: boolean | undefined, externalId = 'new') {
     } satisfies ScrapingStrategy;
 }
 
-function eventStrategy(stateFeed = true, externalId = 'new') {
+function eventStrategy(
+    stateFeed = true,
+    externalId = 'new',
+    status: 'ongoing' | 'omitted' | 'ended' = 'ongoing',
+) {
     return {
         stateFeed,
         source: 'test-events',
@@ -56,7 +64,7 @@ function eventStrategy(stateFeed = true, externalId = 'new') {
                 category: 'fuel_price',
                 title: 'Test event',
                 description: null,
-                status: 'ongoing',
+                status,
                 observedAt: new Date(),
                 startsAt: new Date(),
                 endsAt: null,
@@ -250,6 +258,59 @@ describe('ScrapingOrchestrator insertion and alert policy', () => {
         assert.equal(state.insertedRows.length, 1);
     });
 
+    it('does not treat a re-scraped ended row as newly inserted for non-stateFeed strategies', async () => {
+        const { db, state } = createReportDb({
+            incomingExisting: [{ externalId: 'known-ended', status: 'ended' }],
+        });
+        const { dispatcher, batches } = createDispatcher();
+        const base = reportStrategy(undefined);
+        const sourceRow = at(await base.parse(), 0);
+        const strategy: ScrapingStrategy = {
+            ...base,
+            parse: async () => [
+                {
+                    ...sourceRow,
+                    externalId: 'known-ended',
+                    status: 'ended',
+                    endsAt: new Date(),
+                },
+            ],
+        };
+        const orchestrator = new ScrapingOrchestrator(
+            db,
+            [strategy],
+            dispatcher,
+        );
+        const insert = (
+            orchestrator as unknown as {
+                insert: (
+                    strategy: ScrapingStrategy,
+                    rows: Array<Record<string, unknown>>,
+                ) => Promise<Array<Record<string, unknown>>>;
+            }
+        ).insert.bind(orchestrator);
+        const inserted = await insert(
+            strategy,
+            await strategy.parse(await strategy.fetch()),
+        );
+        assert.deepEqual(
+            inserted,
+            [],
+            'a re-scraped ended row is not newly inserted',
+        );
+        await orchestrator.run(strategy);
+        assert.equal(batches.length, 0);
+        assert.equal(state.conflictSet?.startsAt, undefined);
+        assert.doesNotMatch(
+            sqlText(present(state.conflictSet?.status) as SQL),
+            /excluded\.ends_at IS NULL/i,
+        );
+        assert.doesNotMatch(
+            sqlText(present(state.conflictSet?.endsAt) as SQL),
+            /excluded\.ends_at IS NULL/i,
+        );
+    });
+
     it('does not dispatch when parsing yields no rows and catches strategy failures', async () => {
         const { db } = createReportDb({});
         const { dispatcher, batches } = createDispatcher();
@@ -278,6 +339,176 @@ describe('ScrapingOrchestrator insertion and alert policy', () => {
         await orchestrator.run(failing);
         await orchestrator.run(parseFailure);
         assert.equal(batches.length, 0);
+    });
+});
+
+describe('ScrapingOrchestrator same-day stateFeed recovery', () => {
+    it('reports: normal -> outage -> normal re-opens the day row, ends the outage, and never alerts the recovery', async () => {
+        const label = 'Same location';
+
+        // Phase 1: brand-new normal reading is stored silently.
+        const normalDb = createReportDb({});
+        const normalDispatcher = createDispatcher();
+        const normalStrategy = reportStrategy(true, 'day-normal', 'omitted');
+        await new ScrapingOrchestrator(
+            normalDb.db,
+            [normalStrategy],
+            normalDispatcher.dispatcher,
+        ).run(normalStrategy);
+        assert.deepEqual(normalDb.state.endedIds, []);
+        assert.equal(normalDispatcher.batches.length, 0);
+
+        // Phase 2: brand-new outage at the same location ends the open
+        // normal row and alerts.
+        const outageDb = createReportDb({
+            supersededRows: [
+                {
+                    id: 5,
+                    externalId: 'day-normal',
+                    locationLabel: label,
+                    status: 'omitted',
+                },
+            ],
+        });
+        const outageDispatcher = createDispatcher();
+        const outageStrategy = reportStrategy(true, 'day-outage');
+        await new ScrapingOrchestrator(
+            outageDb.db,
+            [outageStrategy],
+            outageDispatcher.dispatcher,
+        ).run(outageStrategy);
+        assert.deepEqual(outageDb.state.endedIds, [5]);
+        assert.equal(outageDispatcher.batches.length, 1);
+        assert.equal(
+            at(at(outageDispatcher.batches, 0).items, 0).externalId,
+            'day-outage',
+        );
+
+        // Phase 3: recovery re-opens the ended day row, ends the active
+        // outage row, and does not dispatch a false alert.
+        const recoveryDb = createReportDb({
+            incomingExisting: [{ externalId: 'day-normal', status: 'ended' }],
+            supersededRows: [
+                {
+                    id: 9,
+                    externalId: 'day-outage',
+                    locationLabel: label,
+                    status: 'ongoing',
+                },
+            ],
+        });
+        const recoveryDispatcher = createDispatcher();
+        const recoveryStrategy = reportStrategy(true, 'day-normal', 'omitted');
+        await new ScrapingOrchestrator(
+            recoveryDb.db,
+            [recoveryStrategy],
+            recoveryDispatcher.dispatcher,
+        ).run(recoveryStrategy);
+        assert.deepEqual(
+            recoveryDb.state.endedIds,
+            [9],
+            'recovery must end the active outage row',
+        );
+        assert.equal(
+            recoveryDispatcher.batches.length,
+            0,
+            'recovery must not dispatch a false alert',
+        );
+        const statusSql = sqlText(
+            present(recoveryDb.state.conflictSet?.status) as SQL,
+        );
+        assert.match(
+            statusSql,
+            /excluded\.ends_at IS NULL AND "reports"\."status" = 'ended' THEN excluded\.status/i,
+        );
+        assert.match(
+            sqlText(present(recoveryDb.state.conflictSet?.startsAt) as SQL),
+            /excluded\.ends_at IS NULL AND "reports"\."status" = 'ended' THEN excluded\.starts_at/i,
+        );
+    });
+
+    it('events: normal -> outage -> normal re-opens the day event, ends the outage, and never alerts the recovery', async () => {
+        // Phase 1: brand-new normal event is stored silently.
+        const normalDb = createEventDb([]);
+        const normalDispatcher = createDispatcher();
+        const normalStrategy = eventStrategy(true, 'day-normal', 'omitted');
+        await new ScrapingOrchestrator(
+            normalDb.db,
+            [normalStrategy],
+            normalDispatcher.dispatcher,
+        ).run(normalStrategy);
+        assert.equal(normalDispatcher.batches.length, 0);
+
+        // Phase 2: brand-new outage event ends the prior open state and
+        // alerts.
+        const outageDb = createEventDb([]);
+        const outageDispatcher = createDispatcher();
+        const outageStrategy = eventStrategy(true, 'day-outage');
+        await new ScrapingOrchestrator(
+            outageDb.db,
+            [outageStrategy],
+            outageDispatcher.dispatcher,
+        ).run(outageStrategy);
+        assert.equal(outageDb.state.updateCount, 1);
+        assert.equal(outageDispatcher.batches.length, 1);
+        assert.equal(
+            at(at(outageDispatcher.batches, 0).items, 0).externalId,
+            'day-outage',
+        );
+
+        // Phase 3: recovery re-opens the ended normal event, ends the
+        // outage, and does not dispatch a false alert.
+        const recoveryDb = createEventDb([
+            { externalId: 'day-normal', status: 'ended' },
+        ]);
+        const recoveryDispatcher = createDispatcher();
+        const recoveryStrategy = eventStrategy(true, 'day-normal', 'omitted');
+        await new ScrapingOrchestrator(
+            recoveryDb.db,
+            [recoveryStrategy],
+            recoveryDispatcher.dispatcher,
+        ).run(recoveryStrategy);
+        assert.equal(
+            recoveryDb.state.updateCount,
+            1,
+            'recovery must end the active outage event',
+        );
+        assert.equal(
+            recoveryDispatcher.batches.length,
+            0,
+            'recovery must not dispatch a false alert',
+        );
+        const statusSql = sqlText(
+            present(recoveryDb.state.conflictSet?.status) as SQL,
+        );
+        assert.match(
+            statusSql,
+            /excluded\.ends_at IS NULL AND "events"\."status" = 'ended' THEN excluded\.status/i,
+        );
+        assert.match(
+            sqlText(present(recoveryDb.state.conflictSet?.startsAt) as SQL),
+            /excluded\.ends_at IS NULL AND "events"\."status" = 'ended' THEN excluded\.starts_at/i,
+        );
+    });
+
+    it('keeps non-stateFeed conflict rules byte-identical (no re-open branch)', async () => {
+        const { db, state } = createReportDb({
+            incomingExisting: [{ externalId: 'day-normal', status: 'ended' }],
+        });
+        const { dispatcher, batches } = createDispatcher();
+        const strategy = reportStrategy(undefined, 'day-normal', 'omitted');
+        await new ScrapingOrchestrator(db, [strategy], dispatcher).run(
+            strategy,
+        );
+        assert.equal(batches.length, 0);
+        assert.doesNotMatch(
+            sqlText(present(state.conflictSet?.status) as SQL),
+            /excluded\.ends_at is null/i,
+        );
+        assert.doesNotMatch(
+            sqlText(present(state.conflictSet?.endsAt) as SQL),
+            /excluded\.ends_at is null/i,
+        );
     });
 });
 

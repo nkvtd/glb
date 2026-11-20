@@ -173,8 +173,25 @@ export type ExistingReportRow = {
     status: 'ongoing' | 'omitted' | 'scheduled' | 'ended' | 'unknown';
 };
 
+export type FakeConflictSet = Partial<
+    Record<
+        | 'observedAt'
+        | 'startsAt'
+        | 'endsAt'
+        | 'title'
+        | 'description'
+        | 'rawPayload'
+        | 'status'
+        | 'updatedAt',
+        SQL
+    >
+>;
+
 export type ReportDbOptions = {
-    incomingExisting?: Array<{ externalId: string }>;
+    incomingExisting?: Array<{
+        externalId: string;
+        status?: ExistingReportRow['status'];
+    }>;
     supersededRows?: ExistingReportRow[];
     returnedRows?: Array<Record<string, unknown>>;
 };
@@ -184,6 +201,7 @@ export function createReportDb(options: ReportDbOptions = {}) {
         selected: 0,
         insertedRows: [] as Array<Record<string, unknown>>,
         endedIds: [] as number[],
+        conflictSet: null as FakeConflictSet | null,
     };
 
     const tx = {
@@ -208,14 +226,17 @@ export function createReportDb(options: ReportDbOptions = {}) {
             values: (rows: Array<Record<string, unknown>>) => {
                 state.insertedRows = rows;
                 return {
-                    onConflictDoUpdate: () => ({
-                        returning: async () =>
-                            options.returnedRows ??
-                            rows.map((row, index) => ({
-                                id: index + 100,
-                                ...row,
-                            })),
-                    }),
+                    onConflictDoUpdate: (config: { set: FakeConflictSet }) => {
+                        state.conflictSet = config.set;
+                        return {
+                            returning: async () =>
+                                options.returnedRows ??
+                                rows.map((row, index) => ({
+                                    id: index + 100,
+                                    ...row,
+                                })),
+                        };
+                    },
                 };
             },
         }),
@@ -228,10 +249,13 @@ export function createReportDb(options: ReportDbOptions = {}) {
     return { db, state };
 }
 
-export function createEventDb(existing: Array<{ externalId: string }> = []) {
+export function createEventDb(
+    existing: Array<{ externalId: string; status?: string }> = [],
+) {
     const state = {
         updateCount: 0,
         insertedRows: [] as Array<Record<string, unknown>>,
+        conflictSet: null as FakeConflictSet | null,
     };
     const tx = {
         select: () => ({
@@ -248,13 +272,16 @@ export function createEventDb(existing: Array<{ externalId: string }> = []) {
             values: (rows: Array<Record<string, unknown>>) => {
                 state.insertedRows = rows;
                 return {
-                    onConflictDoUpdate: () => ({
-                        returning: async () =>
-                            rows.map((row, index) => ({
-                                id: index + 1,
-                                ...row,
-                            })),
-                    }),
+                    onConflictDoUpdate: (config: { set: FakeConflictSet }) => {
+                        state.conflictSet = config.set;
+                        return {
+                            returning: async () =>
+                                rows.map((row, index) => ({
+                                    id: index + 1,
+                                    ...row,
+                                })),
+                        };
+                    },
                 };
             },
         }),

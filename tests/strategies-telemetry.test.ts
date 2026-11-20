@@ -2134,10 +2134,7 @@ describe('IodaReportsStrategy', () => {
                 present(at(rows, 0).description),
                 'Интернет сообраќајот во Штип се одвива нормално (100% достапност).',
             );
-            assert.equal(
-                at(rows, 0).externalId,
-                'MK0021100-2026-11-13T12:00:00Z',
-            );
+            assert.equal(at(rows, 0).externalId, 'MK0021100-2026-11-13-normal');
             assert.equal(at(rows, 1).municipalityCode, 'MK0041000');
             assert.equal(at(rows, 1).status, 'ongoing');
             assert.equal(at(rows, 1).rawPayload.status, 'outage');
@@ -2146,6 +2143,7 @@ describe('IodaReportsStrategy', () => {
                 present(at(rows, 1).description),
                 'Прекин во интернет сообраќајот во Струмица (50% достапност).',
             );
+            assert.equal(at(rows, 1).externalId, 'MK0041000-2026-11-13-outage');
             assert.equal(at(rows, 2).municipalityCode, 'MK0030700');
             assert.equal(at(rows, 2).locationLabel, 'Кичево');
             assert.equal(at(rows, 3).municipalityCode, 'MK0060900');
@@ -2158,6 +2156,10 @@ describe('IodaReportsStrategy', () => {
             assert.equal(
                 present(at(rows, 3).description),
                 'Намалена достапност на интернет мрежата во Тетово (85% од вообичаениот капацитет).',
+            );
+            assert.equal(
+                at(rows, 3).externalId,
+                'MK0060900-2026-11-13-degraded',
             );
             assert.doesNotMatch(
                 present(at(rows, 1).description),

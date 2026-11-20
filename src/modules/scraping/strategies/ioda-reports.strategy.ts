@@ -17,7 +17,7 @@ import {
     metricForIodaSeries,
 } from './util/ioda.js';
 import { formatPercentComma } from './util/text.js';
-import { floorToUtcHourIso } from './util/time.js';
+import { formatLocalDate } from './util/time.js';
 
 const WINDOW_SECONDS = 86_400;
 const IGNORED_REGION_CODES = new Set(['2592', '4870']);
@@ -145,7 +145,6 @@ export class IodaReportsStrategy
             const startsAt = new Date(
                 (latest ?? Math.floor(observedAt.getTime() / 1000)) * 1000,
             );
-            const hourWindowUtc = floorToUtcHourIso(startsAt);
             const municipalityName = group.municipalityName;
             const payload: IodaReportPayload = {
                 municipalityCode,
@@ -159,7 +158,7 @@ export class IodaReportsStrategy
             rows.push({
                 externalId: this.buildExternalId(
                     municipalityCode,
-                    hourWindowUtc,
+                    formatLocalDate(observedAt),
                     connectivityStatus,
                 ),
                 source: this.source,
@@ -204,12 +203,10 @@ export class IodaReportsStrategy
 
     private buildExternalId(
         municipalityCode: string,
-        hourWindowUtc: string,
+        date: string,
         status: IodaConnectivity,
     ): string {
-        return status === 'normal'
-            ? `${municipalityCode}-${hourWindowUtc}`
-            : `${municipalityCode}-${hourWindowUtc}-${status}`;
+        return `${municipalityCode}-${date}-${status}`;
     }
 
     private formatTitle(

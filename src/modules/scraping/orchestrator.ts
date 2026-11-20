@@ -165,7 +165,10 @@ export class ScrapingOrchestrator {
                 const externalIds = reportRows.map((r) => r.externalId);
 
                 const existing = await tx
-                    .select({ externalId: reports.externalId })
+                    .select({
+                        externalId: reports.externalId,
+                        status: reports.status,
+                    })
                     .from(reports)
                     .where(
                         and(
@@ -174,7 +177,20 @@ export class ScrapingOrchestrator {
                         ),
                     );
 
-                const existingSet = new Set(existing.map((e) => e.externalId));
+                const existingMap = new Map(
+                    existing.map((e) => [e.externalId, e.status]),
+                );
+                // Newly arrived = brand-new id, or an id previously ended that re-opens today.
+                const isNewlyArrived = (row: {
+                    externalId: string;
+                    status: string;
+                    endsAt?: Date | null | undefined;
+                }): boolean =>
+                    !existingMap.has(row.externalId) ||
+                    (strategy.stateFeed === true &&
+                        existingMap.get(row.externalId) === 'ended' &&
+                        row.status !== 'ended' &&
+                        !row.endsAt);
 
                 const alreadyOngoingLocations = new Set<string>();
 
@@ -184,7 +200,7 @@ export class ScrapingOrchestrator {
                             reportRows
                                 .filter(
                                     (r) =>
-                                        !existingSet.has(r.externalId) &&
+                                        isNewlyArrived(r) &&
                                         !r.endsAt &&
                                         Boolean(r.locationLabel),
                                 )
@@ -245,23 +261,39 @@ export class ScrapingOrchestrator {
                     }
                 }
 
+                // Same-day re-open: incoming open-ended state row supersedes an ended row
+                // under the same daily externalId.
+                const reopens = sql`excluded.status != 'ended' AND excluded.ends_at IS NULL AND ${reports.status} = 'ended'`;
+                const conflictSet = strategy.stateFeed
+                    ? {
+                          observedAt: sql`excluded.observed_at`,
+                          startsAt: sql`CASE WHEN ${reopens} THEN excluded.starts_at ELSE ${reports.startsAt} END`,
+                          endsAt: sql`CASE WHEN ${reopens} THEN NULL ELSE coalesce(excluded.ends_at, ${reports.endsAt}) END`,
+                          title: sql`CASE WHEN ${reopens} THEN excluded.title ELSE ${reports.title} END`,
+                          description: sql`CASE WHEN ${reopens} THEN excluded.description ELSE ${reports.description} END`,
+                          rawPayload: sql`CASE WHEN ${reopens} THEN excluded.raw_payload ELSE ${reports.rawPayload} END`,
+                          status: sql`CASE WHEN excluded.status = 'ended' THEN 'ended'::lifecycle_status WHEN ${reopens} THEN excluded.status ELSE ${reports.status} END`,
+                          updatedAt: sql`CASE WHEN excluded.status = 'ended' AND ${reports.status} != 'ended' THEN now() WHEN ${reopens} THEN now() ELSE ${reports.updatedAt} END`,
+                      }
+                    : {
+                          observedAt: sql`excluded.observed_at`,
+                          endsAt: sql`coalesce(excluded.ends_at, ${reports.endsAt})`,
+                          status: sql`CASE WHEN excluded.status = 'ended' THEN 'ended'::lifecycle_status ELSE ${reports.status} END`,
+                          updatedAt: sql`CASE WHEN excluded.status = 'ended' AND ${reports.status} != 'ended' THEN now() ELSE ${reports.updatedAt} END`,
+                      };
+
                 const savedRows = await tx
                     .insert(reports)
                     .values(reportRows)
                     .onConflictDoUpdate({
                         target: [reports.source, reports.externalId],
-                        set: {
-                            observedAt: sql`excluded.observed_at`,
-                            endsAt: sql`coalesce(excluded.ends_at, ${reports.endsAt})`,
-                            status: sql`CASE WHEN excluded.status = 'ended' THEN 'ended'::lifecycle_status ELSE ${reports.status} END`,
-                            updatedAt: sql`CASE WHEN excluded.status = 'ended' AND ${reports.status} != 'ended' THEN now() ELSE ${reports.updatedAt} END`,
-                        },
+                        set: conflictSet,
                     })
                     .returning();
 
                 return savedRows.filter(
                     (row) =>
-                        !existingSet.has(row.externalId) &&
+                        isNewlyArrived(row) &&
                         !(
                             row.locationLabel &&
                             alreadyOngoingLocations.has(row.locationLabel)
@@ -277,7 +309,10 @@ export class ScrapingOrchestrator {
             const externalIds = eventRows.map((r) => r.externalId);
 
             const existing = await tx
-                .select({ externalId: events.externalId })
+                .select({
+                    externalId: events.externalId,
+                    status: events.status,
+                })
                 .from(events)
                 .where(
                     and(
@@ -286,10 +321,23 @@ export class ScrapingOrchestrator {
                     ),
                 );
 
-            const existingSet = new Set(existing.map((e) => e.externalId));
+            const existingMap = new Map(
+                existing.map((e) => [e.externalId, e.status]),
+            );
+            // Newly arrived = brand-new id, or an id previously ended that re-opens today.
+            const isNewlyArrived = (row: {
+                externalId: string;
+                status: string;
+                endsAt?: Date | null | undefined;
+            }): boolean =>
+                !existingMap.has(row.externalId) ||
+                (strategy.stateFeed === true &&
+                    existingMap.get(row.externalId) === 'ended' &&
+                    row.status !== 'ended' &&
+                    !row.endsAt);
 
             const hasNewOpenEnded = eventRows.some(
-                (r) => !existingSet.has(r.externalId) && !r.endsAt,
+                (r) => isNewlyArrived(r) && !r.endsAt,
             );
 
             if (strategy.stateFeed && hasNewOpenEnded) {
@@ -311,21 +359,37 @@ export class ScrapingOrchestrator {
                     );
             }
 
+            // Same-day re-open: incoming open-ended state row supersedes an ended row
+            // under the same daily externalId.
+            const reopens = sql`excluded.status != 'ended' AND excluded.ends_at IS NULL AND ${events.status} = 'ended'`;
+            const conflictSet = strategy.stateFeed
+                ? {
+                      observedAt: sql`excluded.observed_at`,
+                      startsAt: sql`CASE WHEN ${reopens} THEN excluded.starts_at ELSE ${events.startsAt} END`,
+                      endsAt: sql`CASE WHEN ${reopens} THEN NULL ELSE coalesce(excluded.ends_at, ${events.endsAt}) END`,
+                      title: sql`CASE WHEN ${reopens} THEN excluded.title ELSE ${events.title} END`,
+                      description: sql`CASE WHEN ${reopens} THEN excluded.description ELSE ${events.description} END`,
+                      rawPayload: sql`CASE WHEN ${reopens} THEN excluded.raw_payload ELSE ${events.rawPayload} END`,
+                      status: sql`CASE WHEN excluded.status = 'ended' THEN 'ended'::lifecycle_status WHEN ${reopens} THEN excluded.status ELSE ${events.status} END`,
+                      updatedAt: sql`CASE WHEN excluded.status = 'ended' AND ${events.status} != 'ended' THEN now() WHEN ${reopens} THEN now() ELSE ${events.updatedAt} END`,
+                  }
+                : {
+                      observedAt: sql`excluded.observed_at`,
+                      endsAt: sql`coalesce(excluded.ends_at, ${events.endsAt})`,
+                      status: sql`CASE WHEN excluded.status = 'ended' THEN 'ended'::lifecycle_status ELSE ${events.status} END`,
+                      updatedAt: sql`CASE WHEN excluded.status = 'ended' AND ${events.status} != 'ended' THEN now() ELSE ${events.updatedAt} END`,
+                  };
+
             const savedRows = await tx
                 .insert(events)
                 .values(eventRows)
                 .onConflictDoUpdate({
                     target: [events.source, events.externalId],
-                    set: {
-                        observedAt: sql`excluded.observed_at`,
-                        endsAt: sql`coalesce(excluded.ends_at, ${events.endsAt})`,
-                        status: sql`CASE WHEN excluded.status = 'ended' THEN 'ended'::lifecycle_status ELSE ${events.status} END`,
-                        updatedAt: sql`CASE WHEN excluded.status = 'ended' AND ${events.status} != 'ended' THEN now() ELSE ${events.updatedAt} END`,
-                    },
+                    set: conflictSet,
                 })
                 .returning();
 
-            return savedRows.filter((row) => !existingSet.has(row.externalId));
+            return savedRows.filter((row) => isNewlyArrived(row));
         });
     }
 
