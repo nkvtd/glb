@@ -44,7 +44,7 @@ const PLACE_TAIL_RE = /ВО\s+([^,.;:–—]+)$/iu;
 
 const DASH_TAIL_RE = /[–—]\s*([^–—]+)$/u;
 
-const STREET_RE = /(?:УЛИЦАТА|УЛИЦА|УЛ\.)\s*„([^“”"]+)“/iu;
+const STREET_RE = /(?:УЛИЦАТА|УЛИЦА|УЛ\.)\s*[„"“]([^„“”"]+)[“”"]/iu;
 
 const MULTI_DAY_WINDOW_RE =
     /од(?:\s+денес)?\s+(\d{1,2})\.(\d{1,2})\.(\d{4})[\s\S]{0,120}?до\s+(\d{1,2})\.(\d{1,2})\.(\d{4})/iu;
@@ -201,10 +201,12 @@ export class OpstinaOhridStrategy
             return {
                 startsAt,
                 endsAt: null,
-                status:
-                    now.getTime() - startsAt.getTime() > UNDATED_ROAD_TTL_MS
-                        ? 'ended'
-                        : 'ongoing',
+                status: deriveLifecycleStatus(now, startsAt, null, {
+                    closed:
+                        isClosed ||
+                        now.getTime() - startsAt.getTime() >
+                            UNDATED_ROAD_TTL_MS,
+                }),
             };
         }
 

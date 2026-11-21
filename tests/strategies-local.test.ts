@@ -3117,6 +3117,70 @@ describe('OpstinaOhridStrategy', () => {
             });
         });
 
+        it('marks a future-dated open-ended closure as scheduled', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const parsed = await roadStrategy.parse([
+                    makePost(
+                        46711,
+                        'ЗАТВОРЕНА ЗА СООБРАЌАЈ ДЕЛ ОД УЛИЦАТА „7-ми Ноември“',
+                        '<p>Се известуваат сите учесници во сообраќајот дека од утре 19.11.2026 година ќе биде затворен дел од улицата „7-ми Ноември“ за сообраќај, па се до завршување на градежните работи.</p>',
+                        '2026-11-18T08:00:00',
+                    ),
+                ]);
+                assert.equal(parsed.length, 1);
+
+                const report = at(parsed, 0);
+                assert.equal(report.status, 'scheduled');
+                assert.equal(report.endsAt, null);
+                assert.equal(
+                    report.startsAt?.toISOString(),
+                    '2026-11-18T23:00:00.000Z',
+                );
+            });
+        });
+
+        it('ends a recent open-ended closure once the body reports it finished', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const parsed = await roadStrategy.parse([
+                    makePost(
+                        46712,
+                        'ЗАТВОРЕНА ЗА СООБРАЌАЈ ДЕЛ ОД УЛИЦАТА „Кленоец“',
+                        '<p>Делот од улицата „Кленоец“ е нормализиран за сообраќај. Улицата беше затворена од 14.11.2026 година, па се до завршување на градежните работи.</p>',
+                        '2026-11-17T08:00:00',
+                    ),
+                ]);
+                assert.equal(parsed.length, 1);
+
+                const report = at(parsed, 0);
+                assert.equal(report.status, 'ended');
+                assert.equal(report.endsAt, null);
+            });
+        });
+
+        it('decodes HTML-entity quotes before extracting the street', async () => {
+            await withFrozenClock(frozenNow, async () => {
+                const parsed = await roadStrategy.parse([
+                    makePost(
+                        46713,
+                        'ЗАТВОРЕНА ЗА СООБРАЌАЈ ДЕЛ ОД УЛИЦАТА &#8222;7-ми Ноември&#8220;',
+                        '<p>Од утре 19.11.2026 година дел од улицата &#8222;7-ми Ноември&#8220; ќе биде затворен за сообраќај, па се до завршување на градежните работи.</p>',
+                        '2026-11-18T08:00:00',
+                    ),
+                ]);
+                assert.equal(parsed.length, 1);
+
+                const report = at(parsed, 0);
+                assert.equal(
+                    report.locationLabel,
+                    'улица „7-ми Ноември“, Охрид',
+                );
+                assert.equal(
+                    report.title,
+                    'Времен режим на сообраќај: улица „7-ми Ноември“',
+                );
+            });
+        });
+
         it('parses a multi-day closure window in local time', async () => {
             await withFrozenClock(frozenNow, async () => {
                 const parsed = await roadStrategy.parse([
