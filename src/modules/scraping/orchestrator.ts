@@ -7,10 +7,10 @@ import {
     isNotNull,
     isNull,
     lte,
-    notInArray,
     or,
     sql,
 } from 'drizzle-orm';
+import type PQueue from 'p-queue';
 import {
     type EventInsert,
     type EventItem,
@@ -24,20 +24,73 @@ import type { DbOrTx } from '../../infrastructure/database/db.js';
 import { logger } from '../../infrastructure/logging/logger.js';
 import type { ScrapingStrategy } from './strategy.interface.js';
 
+type ExistingRowState = { status: string; endsAt: Date | null };
+
+type Partition<T> = {
+    toInsert: T[];
+    skipped: T[];
+    toTransition: T[];
+    toHeartbeat: T[];
+};
+
+function stripEpisodeSuffix(externalId: string): string {
+    return externalId.replace(/#\d+$/, '');
+}
+
+function partitionRows<
+    T extends {
+        externalId: string;
+        status: string;
+        endsAt?: Date | null | undefined;
+    },
+>(rows: T[], existingMap: Map<string, ExistingRowState>): Partition<T> {
+    const partition: Partition<T> = {
+        toInsert: [],
+        skipped: [],
+        toTransition: [],
+        toHeartbeat: [],
+    };
+
+    for (const row of rows) {
+        const prev = existingMap.get(row.externalId);
+        if (!prev) {
+            partition.toInsert.push(row);
+        } else if (
+            prev.status === 'ended' &&
+            row.status === 'ended' &&
+            (!row.endsAt || prev.endsAt !== null)
+        ) {
+            partition.skipped.push(row);
+        } else if (
+            (row.status === 'ended' && prev.status !== 'ended') ||
+            (row.endsAt != null && prev.endsAt === null)
+        ) {
+            partition.toTransition.push(row);
+        } else {
+            partition.toHeartbeat.push(row);
+        }
+    }
+
+    return partition;
+}
+
 export class ScrapingOrchestrator {
     private readonly db: DbOrTx;
     private readonly strategies: ScrapingStrategy[];
     private readonly dispatcher: AlertDispatcher;
+    private readonly queue: PQueue;
     private readonly jobs: Cron[] = [];
 
     constructor(
         db: DbOrTx,
         strategies: ScrapingStrategy[],
         dispatcher: AlertDispatcher,
+        queue: PQueue,
     ) {
         this.db = db;
         this.strategies = strategies;
         this.dispatcher = dispatcher;
+        this.queue = queue;
     }
 
     start(): void {
@@ -46,7 +99,11 @@ export class ScrapingOrchestrator {
                 strategy.schedule,
                 { protect: true },
                 async () => {
-                    await this.run(strategy);
+                    try {
+                        await this.queue.add(() => this.run(strategy));
+                    } catch {
+                        // queue.clear() aborts queued tasks during shutdown
+                    }
                 },
             );
             this.jobs.push(job);
@@ -105,6 +162,7 @@ export class ScrapingOrchestrator {
     }
 
     stop(): void {
+        this.queue.clear();
         for (const job of this.jobs) {
             job.stop();
         }
@@ -112,40 +170,33 @@ export class ScrapingOrchestrator {
     }
 
     async run(strategy: ScrapingStrategy): Promise<void> {
+        const startedAt = performance.now();
         try {
-            logger.info(`[Worker:${strategy.source}] fetching...`);
             const raw = await strategy.fetch();
-
-            logger.info(`[Worker:${strategy.source}] parsing...`);
             const entries = await strategy.parse(raw);
 
-            logger.info(
-                `[Worker:${strategy.source}] found ${entries.length} entries.`,
-            );
+            let inserted = 0;
+            let updated = 0;
+            let skipped = 0;
 
             if (entries.length > 0) {
-                const inserted = await this.insert(strategy, entries);
+                const result = await this.insert(strategy, entries);
+                inserted = result.inserted.length;
+                updated = result.updated;
+                skipped = result.skipped;
 
-                if (inserted.length > 0) {
-                    logger.info(
-                        `[Worker:${strategy.source}] inserted ${inserted.length} new entries.`,
-                    );
-
-                    const alertable = inserted.filter(
-                        (item) => item.status === 'ongoing',
-                    );
-                    if (alertable.length > 0) {
-                        await this.dispatcher.dispatch(
-                            strategy.source,
-                            alertable,
-                        );
-                    }
-                } else {
-                    logger.info(
-                        `[Worker:${strategy.source}] no new entries to insert.`,
-                    );
+                const alertable = result.inserted.filter(
+                    (item) => item.status === 'ongoing',
+                );
+                if (alertable.length > 0) {
+                    await this.dispatcher.dispatch(strategy.source, alertable);
                 }
             }
+
+            const durationMs = Math.round(performance.now() - startedAt);
+            logger.info(
+                `[Worker:${strategy.source}] done in ${durationMs}ms (found=${entries.length}, inserted=${inserted}, updated=${updated}, skipped=${skipped}).`,
+            );
         } catch (error) {
             logger.error(`[Worker:${strategy.source}] failed:\n%O`, error);
         }
@@ -154,7 +205,11 @@ export class ScrapingOrchestrator {
     private async insert(
         strategy: ScrapingStrategy,
         rows: Array<ReportInsert | EventInsert>,
-    ): Promise<Array<ReportItem | EventItem>> {
+    ): Promise<{
+        inserted: Array<ReportItem | EventItem>;
+        updated: number;
+        skipped: number;
+    }> {
         return await this.db.transaction(async (tx) => {
             if (strategy.target === 'reports') {
                 const uniqueMap = new Map<string, ReportInsert>();
@@ -168,6 +223,7 @@ export class ScrapingOrchestrator {
                     .select({
                         externalId: reports.externalId,
                         status: reports.status,
+                        endsAt: reports.endsAt,
                     })
                     .from(reports)
                     .where(
@@ -177,128 +233,181 @@ export class ScrapingOrchestrator {
                         ),
                     );
 
-                const existingMap = new Map(
-                    existing.map((e) => [e.externalId, e.status]),
+                const existingMap = new Map<string, ExistingRowState>(
+                    existing.map((e) => [
+                        e.externalId,
+                        { status: e.status, endsAt: e.endsAt },
+                    ]),
                 );
-                // Newly arrived = brand-new id, or an id previously ended that re-opens today.
-                const isNewlyArrived = (row: {
-                    externalId: string;
-                    status: string;
-                    endsAt?: Date | null | undefined;
-                }): boolean =>
-                    !existingMap.has(row.externalId) ||
-                    (strategy.stateFeed === true &&
-                        existingMap.get(row.externalId) === 'ended' &&
-                        row.status !== 'ended' &&
-                        !row.endsAt);
-
+                const now = new Date();
+                const supersededIdsToEnd = new Set<number>();
                 const alreadyOngoingLocations = new Set<string>();
+                const episodeInserts: ReportInsert[] = [];
+                const heartbeatRowIds = new Set<number>();
 
-                if (strategy.stateFeed) {
-                    const supersededLocations = Array.from(
-                        new Set(
-                            reportRows
-                                .filter(
-                                    (r) =>
-                                        isNewlyArrived(r) &&
-                                        !r.endsAt &&
-                                        Boolean(r.locationLabel),
-                                )
-                                .map((r) => r.locationLabel as string),
-                        ),
-                    );
+                const stateFeed = strategy.stateFeed === true;
+                const episodeRows = stateFeed
+                    ? reportRows.filter(
+                          (r) =>
+                              !r.endsAt &&
+                              r.status !== 'ended' &&
+                              Boolean(r.locationLabel),
+                      )
+                    : [];
+                const episodeSet = new Set(episodeRows);
+                const remainder = reportRows.filter((r) => !episodeSet.has(r));
+                const incomingLocations = Array.from(
+                    new Set(
+                        episodeRows
+                            .map((r) => r.locationLabel)
+                            .filter((label): label is string => Boolean(label)),
+                    ),
+                );
+                const { toInsert, skipped, toTransition, toHeartbeat } =
+                    partitionRows(remainder, existingMap);
 
-                    if (supersededLocations.length > 0) {
-                        const supersededRows = await tx
-                            .select({
-                                id: reports.id,
-                                locationLabel: reports.locationLabel,
-                                status: reports.status,
-                            })
-                            .from(reports)
-                            .where(
-                                and(
-                                    eq(reports.source, strategy.source),
-                                    inArray(reports.status, [
-                                        'ongoing',
-                                        'omitted',
-                                    ]),
-                                    isNull(reports.endsAt),
-                                    notInArray(reports.externalId, externalIds),
-                                    inArray(
-                                        reports.locationLabel,
-                                        supersededLocations,
-                                    ),
+                if (incomingLocations.length > 0) {
+                    const activeRows = await tx
+                        .select({
+                            id: reports.id,
+                            externalId: reports.externalId,
+                            locationLabel: reports.locationLabel,
+                            status: reports.status,
+                        })
+                        .from(reports)
+                        .where(
+                            and(
+                                eq(reports.source, strategy.source),
+                                inArray(reports.status, ['ongoing', 'omitted']),
+                                isNull(reports.endsAt),
+                                inArray(
+                                    reports.locationLabel,
+                                    incomingLocations,
                                 ),
-                            );
+                            ),
+                        );
 
-                        if (supersededRows.length > 0) {
-                            await tx
-                                .update(reports)
-                                .set({
-                                    status: 'ended',
-                                    endsAt: sql`now()`,
-                                    updatedAt: sql`now()`,
-                                })
-                                .where(
-                                    inArray(
-                                        reports.id,
-                                        supersededRows.map((r) => r.id),
-                                    ),
-                                );
+                    const activeByLocation = new Map<
+                        string,
+                        typeof activeRows
+                    >();
+                    for (const active of activeRows) {
+                        if (!active.locationLabel) continue;
+                        const group =
+                            activeByLocation.get(active.locationLabel) ?? [];
+                        group.push(active);
+                        activeByLocation.set(active.locationLabel, group);
+                    }
 
-                            for (const row of supersededRows) {
-                                if (
-                                    row.status === 'ongoing' &&
-                                    row.locationLabel
-                                ) {
-                                    alreadyOngoingLocations.add(
-                                        row.locationLabel,
-                                    );
-                                }
+                    for (const row of episodeRows) {
+                        const location = row.locationLabel as string;
+                        const actives = activeByLocation.get(location) ?? [];
+                        const match = actives.find(
+                            (active) =>
+                                stripEpisodeSuffix(active.externalId) ===
+                                row.externalId,
+                        );
+                        if (match) {
+                            heartbeatRowIds.add(match.id);
+                            continue;
+                        }
+                        for (const active of actives) {
+                            supersededIdsToEnd.add(active.id);
+                            if (active.status === 'ongoing') {
+                                alreadyOngoingLocations.add(location);
                             }
                         }
+                        episodeInserts.push(
+                            existingMap.has(row.externalId)
+                                ? {
+                                      ...row,
+                                      externalId: `${row.externalId}#${now.getTime()}`,
+                                  }
+                                : row,
+                        );
                     }
                 }
 
-                // Same-day re-open: incoming open-ended state row supersedes an ended row
-                // under the same daily externalId.
-                const reopens = sql`excluded.status != 'ended' AND excluded.ends_at IS NULL AND ${reports.status} = 'ended'`;
-                const conflictSet = strategy.stateFeed
-                    ? {
-                          observedAt: sql`excluded.observed_at`,
-                          startsAt: sql`CASE WHEN ${reopens} THEN excluded.starts_at ELSE ${reports.startsAt} END`,
-                          endsAt: sql`CASE WHEN ${reopens} THEN NULL ELSE coalesce(excluded.ends_at, ${reports.endsAt}) END`,
-                          title: sql`CASE WHEN ${reopens} THEN excluded.title ELSE ${reports.title} END`,
-                          description: sql`CASE WHEN ${reopens} THEN excluded.description ELSE ${reports.description} END`,
-                          rawPayload: sql`CASE WHEN ${reopens} THEN excluded.raw_payload ELSE ${reports.rawPayload} END`,
-                          status: sql`CASE WHEN excluded.status = 'ended' THEN 'ended'::lifecycle_status WHEN ${reopens} THEN excluded.status ELSE ${reports.status} END`,
-                          updatedAt: sql`CASE WHEN excluded.status = 'ended' AND ${reports.status} != 'ended' THEN now() WHEN ${reopens} THEN now() ELSE ${reports.updatedAt} END`,
-                      }
-                    : {
-                          observedAt: sql`excluded.observed_at`,
-                          endsAt: sql`coalesce(excluded.ends_at, ${reports.endsAt})`,
-                          status: sql`CASE WHEN excluded.status = 'ended' THEN 'ended'::lifecycle_status ELSE ${reports.status} END`,
-                          updatedAt: sql`CASE WHEN excluded.status = 'ended' AND ${reports.status} != 'ended' THEN now() ELSE ${reports.updatedAt} END`,
-                      };
+                if (supersededIdsToEnd.size > 0) {
+                    await tx
+                        .update(reports)
+                        .set({
+                            status: 'ended',
+                            endsAt: sql`now()`,
+                            updatedAt: sql`now()`,
+                        })
+                        .where(inArray(reports.id, [...supersededIdsToEnd]));
+                }
 
-                const savedRows = await tx
-                    .insert(reports)
-                    .values(reportRows)
-                    .onConflictDoUpdate({
-                        target: [reports.source, reports.externalId],
-                        set: conflictSet,
-                    })
-                    .returning();
+                const rowsToInsert = [...episodeInserts, ...toInsert];
+                let insertedRows: ReportItem[] = [];
+                if (rowsToInsert.length > 0) {
+                    insertedRows = await tx
+                        .insert(reports)
+                        .values(rowsToInsert)
+                        .onConflictDoNothing({
+                            target: [reports.source, reports.externalId],
+                        })
+                        .returning();
+                }
 
-                return savedRows.filter(
-                    (row) =>
-                        isNewlyArrived(row) &&
-                        !(
-                            row.locationLabel &&
-                            alreadyOngoingLocations.has(row.locationLabel)
-                        ),
-                );
+                for (const row of toTransition) {
+                    await tx
+                        .update(reports)
+                        .set({
+                            observedAt: row.observedAt,
+                            endsAt: sql`coalesce(${row.endsAt ?? null}, ${reports.endsAt})`,
+                            status:
+                                row.status === 'ended'
+                                    ? 'ended'
+                                    : sql`${reports.status}`,
+                            updatedAt:
+                                row.status === 'ended'
+                                    ? sql`now()`
+                                    : sql`${reports.updatedAt}`,
+                        })
+                        .where(
+                            and(
+                                eq(reports.source, strategy.source),
+                                eq(reports.externalId, row.externalId),
+                            ),
+                        );
+                }
+
+                const heartbeatIds = toHeartbeat.map((r) => r.externalId);
+                if (heartbeatIds.length > 0) {
+                    await tx
+                        .update(reports)
+                        .set({ observedAt: new Date() })
+                        .where(
+                            and(
+                                eq(reports.source, strategy.source),
+                                inArray(reports.externalId, heartbeatIds),
+                            ),
+                        );
+                }
+
+                if (heartbeatRowIds.size > 0) {
+                    await tx
+                        .update(reports)
+                        .set({ observedAt: now })
+                        .where(inArray(reports.id, [...heartbeatRowIds]));
+                }
+
+                return {
+                    inserted: insertedRows.filter(
+                        (row) =>
+                            !(
+                                row.locationLabel &&
+                                alreadyOngoingLocations.has(row.locationLabel)
+                            ),
+                    ),
+                    updated:
+                        toTransition.length +
+                        toHeartbeat.length +
+                        heartbeatRowIds.size,
+                    skipped: skipped.length,
+                };
             }
 
             const uniqueMap = new Map<string, EventInsert>();
@@ -312,6 +421,7 @@ export class ScrapingOrchestrator {
                 .select({
                     externalId: events.externalId,
                     status: events.status,
+                    endsAt: events.endsAt,
                 })
                 .from(events)
                 .where(
@@ -321,26 +431,68 @@ export class ScrapingOrchestrator {
                     ),
                 );
 
-            const existingMap = new Map(
-                existing.map((e) => [e.externalId, e.status]),
+            const existingMap = new Map<string, ExistingRowState>(
+                existing.map((e) => [
+                    e.externalId,
+                    { status: e.status, endsAt: e.endsAt },
+                ]),
             );
-            // Newly arrived = brand-new id, or an id previously ended that re-opens today.
-            const isNewlyArrived = (row: {
-                externalId: string;
-                status: string;
-                endsAt?: Date | null | undefined;
-            }): boolean =>
-                !existingMap.has(row.externalId) ||
-                (strategy.stateFeed === true &&
-                    existingMap.get(row.externalId) === 'ended' &&
-                    row.status !== 'ended' &&
-                    !row.endsAt);
+            const now = new Date();
+            const supersededIdsToEnd = new Set<number>();
+            const episodeInserts: EventInsert[] = [];
+            const heartbeatRowIds = new Set<number>();
 
-            const hasNewOpenEnded = eventRows.some(
-                (r) => isNewlyArrived(r) && !r.endsAt,
-            );
+            const stateFeed = strategy.stateFeed === true;
+            const episodeRows = stateFeed
+                ? eventRows.filter((r) => !r.endsAt && r.status !== 'ended')
+                : [];
+            const episodeSet = new Set(episodeRows);
+            const remainder = eventRows.filter((r) => !episodeSet.has(r));
+            const { toInsert, skipped, toTransition, toHeartbeat } =
+                partitionRows(remainder, existingMap);
 
-            if (strategy.stateFeed && hasNewOpenEnded) {
+            if (episodeRows.length > 0) {
+                const activeRows = await tx
+                    .select({
+                        id: events.id,
+                        externalId: events.externalId,
+                        status: events.status,
+                    })
+                    .from(events)
+                    .where(
+                        and(
+                            eq(events.source, strategy.source),
+                            eq(events.category, strategy.category),
+                            inArray(events.status, ['ongoing', 'omitted']),
+                            isNull(events.endsAt),
+                        ),
+                    );
+
+                for (const row of episodeRows) {
+                    const match = activeRows.find(
+                        (active) =>
+                            stripEpisodeSuffix(active.externalId) ===
+                            row.externalId,
+                    );
+                    if (match) {
+                        heartbeatRowIds.add(match.id);
+                        continue;
+                    }
+                    for (const active of activeRows) {
+                        supersededIdsToEnd.add(active.id);
+                    }
+                    episodeInserts.push(
+                        existingMap.has(row.externalId)
+                            ? {
+                                  ...row,
+                                  externalId: `${row.externalId}#${now.getTime()}`,
+                              }
+                            : row,
+                    );
+                }
+            }
+
+            if (supersededIdsToEnd.size > 0) {
                 await tx
                     .update(events)
                     .set({
@@ -348,48 +500,72 @@ export class ScrapingOrchestrator {
                         endsAt: sql`now()`,
                         updatedAt: sql`now()`,
                     })
+                    .where(inArray(events.id, [...supersededIdsToEnd]));
+            }
+
+            const rowsToInsert = [...episodeInserts, ...toInsert];
+            let insertedRows: EventItem[] = [];
+            if (rowsToInsert.length > 0) {
+                insertedRows = await tx
+                    .insert(events)
+                    .values(rowsToInsert)
+                    .onConflictDoNothing({
+                        target: [events.source, events.externalId],
+                    })
+                    .returning();
+            }
+
+            for (const row of toTransition) {
+                await tx
+                    .update(events)
+                    .set({
+                        observedAt: row.observedAt,
+                        endsAt: sql`coalesce(${row.endsAt ?? null}, ${events.endsAt})`,
+                        status:
+                            row.status === 'ended'
+                                ? 'ended'
+                                : sql`${events.status}`,
+                        updatedAt:
+                            row.status === 'ended'
+                                ? sql`now()`
+                                : sql`${events.updatedAt}`,
+                    })
                     .where(
                         and(
                             eq(events.source, strategy.source),
-                            eq(events.category, strategy.category),
-                            inArray(events.status, ['ongoing', 'omitted']),
-                            isNull(events.endsAt),
-                            notInArray(events.externalId, externalIds),
+                            eq(events.externalId, row.externalId),
                         ),
                     );
             }
 
-            // Same-day re-open: incoming open-ended state row supersedes an ended row
-            // under the same daily externalId.
-            const reopens = sql`excluded.status != 'ended' AND excluded.ends_at IS NULL AND ${events.status} = 'ended'`;
-            const conflictSet = strategy.stateFeed
-                ? {
-                      observedAt: sql`excluded.observed_at`,
-                      startsAt: sql`CASE WHEN ${reopens} THEN excluded.starts_at ELSE ${events.startsAt} END`,
-                      endsAt: sql`CASE WHEN ${reopens} THEN NULL ELSE coalesce(excluded.ends_at, ${events.endsAt}) END`,
-                      title: sql`CASE WHEN ${reopens} THEN excluded.title ELSE ${events.title} END`,
-                      description: sql`CASE WHEN ${reopens} THEN excluded.description ELSE ${events.description} END`,
-                      rawPayload: sql`CASE WHEN ${reopens} THEN excluded.raw_payload ELSE ${events.rawPayload} END`,
-                      status: sql`CASE WHEN excluded.status = 'ended' THEN 'ended'::lifecycle_status WHEN ${reopens} THEN excluded.status ELSE ${events.status} END`,
-                      updatedAt: sql`CASE WHEN excluded.status = 'ended' AND ${events.status} != 'ended' THEN now() WHEN ${reopens} THEN now() ELSE ${events.updatedAt} END`,
-                  }
-                : {
-                      observedAt: sql`excluded.observed_at`,
-                      endsAt: sql`coalesce(excluded.ends_at, ${events.endsAt})`,
-                      status: sql`CASE WHEN excluded.status = 'ended' THEN 'ended'::lifecycle_status ELSE ${events.status} END`,
-                      updatedAt: sql`CASE WHEN excluded.status = 'ended' AND ${events.status} != 'ended' THEN now() ELSE ${events.updatedAt} END`,
-                  };
+            const heartbeatIds = toHeartbeat.map((r) => r.externalId);
+            if (heartbeatIds.length > 0) {
+                await tx
+                    .update(events)
+                    .set({ observedAt: new Date() })
+                    .where(
+                        and(
+                            eq(events.source, strategy.source),
+                            inArray(events.externalId, heartbeatIds),
+                        ),
+                    );
+            }
 
-            const savedRows = await tx
-                .insert(events)
-                .values(eventRows)
-                .onConflictDoUpdate({
-                    target: [events.source, events.externalId],
-                    set: conflictSet,
-                })
-                .returning();
+            if (heartbeatRowIds.size > 0) {
+                await tx
+                    .update(events)
+                    .set({ observedAt: now })
+                    .where(inArray(events.id, [...heartbeatRowIds]));
+            }
 
-            return savedRows.filter((row) => isNewlyArrived(row));
+            return {
+                inserted: insertedRows,
+                updated:
+                    toTransition.length +
+                    toHeartbeat.length +
+                    heartbeatRowIds.size,
+                skipped: skipped.length,
+            };
         });
     }
 

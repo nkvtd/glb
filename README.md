@@ -100,7 +100,7 @@ It operates as two strictly separated processes sharing a single PostgreSQL + Po
 | **Database & GIS** | PostgreSQL `18`, PostGIS `3.6` | Relational storage with GiST-indexed `geometry(Point, 4326)` and `geometry(MultiPolygon, 4326)` columns. |
 | **ORM & Migrations** | Drizzle ORM, Drizzle Kit, `drizzle-zod` | Type-safe SQL queries, schema-driven DTO projection, and automated SQL migration generation. |
 | **Validation** | Zod `4.x`, `zod-validation-error` | Runtime validation for environment config, upstream scraper payloads, HTTP query parameters, and response DTOs. |
-| **Scheduling** | Croner `10.x` | In-process cron scheduling with overlap protection (`protect: true`) for scrapers and the 15-minute lifecycle reconciler. |
+| **Scheduling** | Croner `10.x`, `p-queue` | In-process cron scheduling with overlap protection (`protect: true`) for scrapers and the 15-minute lifecycle reconciler; a bounded `p-queue` (`concurrency: 4`) smooths startup bursts and overlapping cron ticks. |
 | **Logging** | Winston, `winston-daily-rotate-file` | Structured JSON file logs (7-day retention for combined, error, exception, and rejection streams) and formatted console output. |
 | **Build & Quality** | Esbuild, Biome `2.5` | Fast ESM bundling to `dist/` and unified linting, formatting, and import sorting. |
 | **Deployment** | Docker Buildx, GitHub Actions, Watchtower | Multi-arch (`linux/amd64`, `linux/arm64`) images published to GHCR and rolled out automatically in production. |

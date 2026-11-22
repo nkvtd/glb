@@ -1,3 +1,4 @@
+import PQueue from 'p-queue';
 import { AlertDispatcher } from './infrastructure/alerting/dispatcher.js';
 import { db, pool } from './infrastructure/database/db.js';
 import { logger } from './infrastructure/logging/logger.js';
@@ -29,6 +30,8 @@ async function main() {
 
     const dispatcher = new AlertDispatcher();
     await dispatcher.init();
+
+    const queue = new PQueue({ concurrency: 4 });
 
     const strategies = [
         new EvnStrategy(
@@ -127,7 +130,12 @@ async function main() {
         ),
     ];
 
-    const orchestrator = new ScrapingOrchestrator(db, strategies, dispatcher);
+    const orchestrator = new ScrapingOrchestrator(
+        db,
+        strategies,
+        dispatcher,
+        queue,
+    );
     orchestrator.start();
 
     const shutdown = async () => {

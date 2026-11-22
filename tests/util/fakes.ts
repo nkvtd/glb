@@ -3,6 +3,7 @@ import type { EventItem, ReportItem } from '../../src/core/schema.js';
 import type { AlertDispatcher } from '../../src/infrastructure/alerting/dispatcher.js';
 import type { DbOrTx } from '../../src/infrastructure/database/db.js';
 import type { MunicipalityResolver } from '../../src/modules/scraping/resolver.js';
+import { sqlParams } from './assertions.js';
 
 export type FakeResolverOverrides = {
     /** Exact-match map for `resolveText`, or a custom callback. */
@@ -173,70 +174,82 @@ export type ExistingReportRow = {
     status: 'ongoing' | 'omitted' | 'scheduled' | 'ended' | 'unknown';
 };
 
-export type FakeConflictSet = Partial<
-    Record<
-        | 'observedAt'
-        | 'startsAt'
-        | 'endsAt'
-        | 'title'
-        | 'description'
-        | 'rawPayload'
-        | 'status'
-        | 'updatedAt',
-        SQL
-    >
->;
-
 export type ReportDbOptions = {
     incomingExisting?: Array<{
         externalId: string;
         status?: ExistingReportRow['status'];
+        endsAt?: Date | null;
     }>;
-    supersededRows?: ExistingReportRow[];
-    returnedRows?: Array<Record<string, unknown>>;
+    activeRows?: ExistingReportRow[];
+};
+
+export type FakeUpdateValues = {
+    [key: string]: unknown;
+    status?: unknown;
+    endsAt?: unknown;
+};
+
+export type FakeInsertedRow = Record<string, unknown> & {
+    id: number;
+    externalId?: string;
+    locationLabel?: string | null;
 };
 
 export function createReportDb(options: ReportDbOptions = {}) {
     const state = {
         selected: 0,
-        insertedRows: [] as Array<Record<string, unknown>>,
+        insertedRows: [] as FakeInsertedRow[],
+        updatedCount: 0,
         endedIds: [] as number[],
-        conflictSet: null as FakeConflictSet | null,
     };
+
+    const existingRows = (options.incomingExisting ?? []).map((row) => ({
+        externalId: row.externalId,
+        status: row.status ?? 'ongoing',
+        endsAt: row.endsAt ?? null,
+    }));
 
     const tx = {
         select: () => ({
             from: () => ({
                 where: async () =>
                     state.selected++ === 0
-                        ? (options.incomingExisting ?? [])
-                        : (options.supersededRows ?? []),
+                        ? existingRows
+                        : (options.activeRows ?? []),
             }),
         }),
         update: () => ({
-            set: () => ({
-                where: async () => {
-                    state.endedIds.push(
-                        ...(options.supersededRows ?? []).map((row) => row.id),
-                    );
+            set: (values: FakeUpdateValues) => ({
+                where: (condition: SQL) => {
+                    state.updatedCount += 1;
+                    if (
+                        values.status === 'ended' &&
+                        !('observedAt' in values)
+                    ) {
+                        state.endedIds.push(
+                            ...sqlParams(condition).filter(
+                                (param): param is number =>
+                                    typeof param === 'number',
+                            ),
+                        );
+                    }
+                    return {
+                        returning: async () => [],
+                    };
                 },
             }),
         }),
         insert: () => ({
             values: (rows: Array<Record<string, unknown>>) => {
-                state.insertedRows = rows;
+                state.insertedRows = rows as FakeInsertedRow[];
                 return {
-                    onConflictDoUpdate: (config: { set: FakeConflictSet }) => {
-                        state.conflictSet = config.set;
-                        return {
-                            returning: async () =>
-                                options.returnedRows ??
-                                rows.map((row, index) => ({
-                                    id: index + 100,
-                                    ...row,
-                                })),
-                        };
-                    },
+                    onConflictDoNothing: () => ({
+                        returning: async () =>
+                            rows.map((row, index) => ({
+                                id: index + 100,
+                                ...row,
+                            })),
+                    }),
                 };
             },
         }),
@@ -249,39 +262,74 @@ export function createReportDb(options: ReportDbOptions = {}) {
     return { db, state };
 }
 
-export function createEventDb(
-    existing: Array<{ externalId: string; status?: string }> = [],
-) {
+export type ExistingEventRow = {
+    id: number;
+    externalId: string;
+    status: 'ongoing' | 'omitted' | 'scheduled' | 'ended' | 'unknown';
+};
+
+export type EventDbOptions = {
+    incomingExisting?: Array<{
+        externalId: string;
+        status?: ExistingEventRow['status'];
+        endsAt?: Date | null;
+    }>;
+    activeRows?: ExistingEventRow[];
+};
+
+export function createEventDb(options: EventDbOptions = {}) {
     const state = {
-        updateCount: 0,
-        insertedRows: [] as Array<Record<string, unknown>>,
-        conflictSet: null as FakeConflictSet | null,
+        selected: 0,
+        insertedRows: [] as FakeInsertedRow[],
+        updatedCount: 0,
+        endedIds: [] as number[],
     };
+    const existingRows = (options.incomingExisting ?? []).map((row) => ({
+        externalId: row.externalId,
+        status: row.status ?? 'ongoing',
+        endsAt: row.endsAt ?? null,
+    }));
     const tx = {
         select: () => ({
-            from: () => ({ where: async () => existing }),
+            from: () => ({
+                where: async () =>
+                    state.selected++ === 0
+                        ? existingRows
+                        : (options.activeRows ?? []),
+            }),
         }),
         update: () => ({
-            set: () => ({
-                where: async () => {
-                    state.updateCount += 1;
+            set: (values: FakeUpdateValues) => ({
+                where: (condition: SQL) => {
+                    state.updatedCount += 1;
+                    if (
+                        values.status === 'ended' &&
+                        !('observedAt' in values)
+                    ) {
+                        state.endedIds.push(
+                            ...sqlParams(condition).filter(
+                                (param): param is number =>
+                                    typeof param === 'number',
+                            ),
+                        );
+                    }
+                    return {
+                        returning: async () => [],
+                    };
                 },
             }),
         }),
         insert: () => ({
             values: (rows: Array<Record<string, unknown>>) => {
-                state.insertedRows = rows;
+                state.insertedRows = rows as FakeInsertedRow[];
                 return {
-                    onConflictDoUpdate: (config: { set: FakeConflictSet }) => {
-                        state.conflictSet = config.set;
-                        return {
-                            returning: async () =>
-                                rows.map((row, index) => ({
-                                    id: index + 1,
-                                    ...row,
-                                })),
-                        };
-                    },
+                    onConflictDoNothing: () => ({
+                        returning: async () =>
+                            rows.map((row, index) => ({
+                                id: index + 1,
+                                ...row,
+                            })),
+                    }),
                 };
             },
         }),
