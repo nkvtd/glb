@@ -82,6 +82,37 @@ describe('MoeppStrategy', () => {
             );
         });
 
+        it('posts the Skopje calendar date, not the host date', async () => {
+            let body = '';
+            await withFrozenClock(
+                new Date('2026-11-18T23:30:00Z'),
+                async () => {
+                    await withFetch(
+                        async (_input, init) => {
+                            if (init?.method === 'POST') {
+                                body = String(init.body);
+                                return jsonResponse([measurement]);
+                            }
+                            return jsonResponse([station]);
+                        },
+                        async () => {
+                            await new MoeppStrategy(
+                                'https://moepp.test/api',
+                                '* * * * *',
+                                createFakeResolver(),
+                            ).fetch();
+                        },
+                    );
+                },
+            );
+            const payload = JSON.parse(body) as {
+                DateFrom: string;
+                DateTo: string;
+            };
+            assert.equal(payload.DateFrom, '2026-11-19');
+            assert.equal(payload.DateTo, '2026-11-19');
+        });
+
         it('rejects GET failures', async () => {
             await withFetch(
                 async () => textResponse('station error', 500),
@@ -199,6 +230,19 @@ describe('MoeppStrategy', () => {
             assert.equal(parsed.length, 1);
             const poorReport = at(parsed, 0);
             assert.equal(poorReport.status, 'ongoing');
+            assert.equal(
+                present(poorReport.startsAt).toISOString(),
+                '2026-10-25T08:00:00.000Z',
+            );
+            const parseLocalTimestamp = (
+                strategy as unknown as {
+                    parseLocalTimestamp(raw: string): Date;
+                }
+            ).parseLocalTimestamp.bind(strategy);
+            assert.equal(
+                parseLocalTimestamp('2026-06-15T09:00:00').toISOString(),
+                '2026-06-15T07:00:00.000Z',
+            );
             assert.equal(
                 poorReport.title,
                 'Лош квалитет на воздух: Лисиче, Аеродром',
@@ -1866,7 +1910,7 @@ describe('IodaEventsStrategy', () => {
                                 'bgp',
                                 [100, 50, 100],
                             ),
-                            from: timestamp - 13 * 3600 - 600,
+                            from: timestamp - 13 * 3600 - 900,
                         },
                     ],
                     asnSeries: [],
@@ -1876,6 +1920,28 @@ describe('IodaEventsStrategy', () => {
             assert.equal(
                 previousDayRecovery.externalId,
                 'ioda-mk-2026-11-13-normal',
+            );
+            const boundaryRecovery = at(
+                await strategy.parse({
+                    countrySeries: [
+                        {
+                            ...makeSeries(
+                                'country',
+                                'MK',
+                                'North Macedonia',
+                                'bgp',
+                                [100, 50, 100],
+                            ),
+                            from: timestamp - 13 * 3600 - 600,
+                        },
+                    ],
+                    asnSeries: [],
+                }),
+                0,
+            );
+            assert.equal(
+                boundaryRecovery.externalId,
+                `ioda-mk-2026-11-13-normal-${timestamp - 13 * 3600}`,
             );
         });
 

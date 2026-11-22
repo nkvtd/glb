@@ -16,6 +16,7 @@ import {
 import { fetchJson } from './util/fetch.js';
 import { formatEwktPoint } from './util/geo.js';
 import { toTitleCase } from './util/text.js';
+import { extractIsoDay, formatLocalDate, getLocalOffset } from './util/time.js';
 
 type MoeppRaw = {
     stations: MoeppStation[];
@@ -45,7 +46,7 @@ export class MoeppStrategy
             moeppStationsResponseSchema,
         );
 
-        const today = new Date().toLocaleDateString('en-CA');
+        const today = formatLocalDate(new Date());
 
         const measurements = await fetchJson(
             `${this.url}/latest-measures-hour-stations`,
@@ -117,7 +118,7 @@ export class MoeppStrategy
                 geom: formatEwktPoint(station.longitude, station.latitude),
                 status: isPoor ? 'ongoing' : 'omitted',
                 observedAt: now,
-                startsAt: new Date(measurement.toTime),
+                startsAt: this.parseLocalTimestamp(measurement.toTime),
                 endsAt: null,
                 rawPayload: {
                     station,
@@ -131,6 +132,17 @@ export class MoeppStrategy
 
     private buildExternalId(stationId: number, fromTime: string): string {
         return `${stationId}-${fromTime}`;
+    }
+
+    private parseLocalTimestamp(raw: string): Date {
+        const trimmed = raw.trim();
+        if (/[Zz]$|[+-]\d{2}:\d{2}$/.test(trimmed)) return new Date(trimmed);
+        const day = extractIsoDay(trimmed);
+        if (day) {
+            const offset = getLocalOffset(new Date(`${day}T12:00:00Z`));
+            return new Date(`${trimmed}${offset}`);
+        }
+        return new Date(trimmed);
     }
 
     private formatTitle(

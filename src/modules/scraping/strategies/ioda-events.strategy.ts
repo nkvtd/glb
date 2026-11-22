@@ -18,7 +18,7 @@ import {
 } from './util/ioda.js';
 import { median } from './util/math.js';
 import { formatPercentComma } from './util/text.js';
-import { formatLocalDate } from './util/time.js';
+import { formatLocalDate, parseLocalMidnight } from './util/time.js';
 
 const WINDOW_SECONDS = 86_400;
 const DOMESTIC_OPERATORS: ReadonlyArray<{
@@ -171,7 +171,7 @@ export class IodaEventsStrategy
         const observedAt = this.now();
         const todayKey = formatLocalDate(observedAt);
         const minTimestampSec = Math.floor(
-            Date.parse(`${todayKey}T00:00:00Z`) / 1000,
+            parseLocalMidnight(todayKey).getTime() / 1000,
         );
         const recoverySec = this.recoveryTimestamp(bgpSeries, minTimestampSec);
         const affectedSlugs = affected
