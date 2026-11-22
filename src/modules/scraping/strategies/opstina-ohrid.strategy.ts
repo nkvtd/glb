@@ -1,7 +1,4 @@
-import type {
-    OpstinaOhridCategory,
-    OpstinaOhridReportInsert,
-} from '../../../core/types/opstina-ohrid.js';
+import type { OpstinaOhridReportInsert } from '../../../core/types/opstina-ohrid.js';
 import {
     type OpstinaOhridItem,
     opstinaOhridResponseSchema,
@@ -73,17 +70,14 @@ type EventWindow = {
 export class OpstinaOhridStrategy
     implements ScrapingStrategy<OpstinaOhridItem[], OpstinaOhridReportInsert>
 {
-    readonly source: string;
+    readonly source = 'opstina-ohrid';
     readonly url: string;
-    readonly category: OpstinaOhridCategory;
     readonly target = 'reports';
     readonly schedule: string;
 
-    constructor(url: string, schedule: string, category: OpstinaOhridCategory) {
-        this.source = `opstina-ohrid-${category}`;
+    constructor(url: string, schedule: string) {
         this.url = url;
         this.schedule = schedule;
-        this.category = category;
     }
 
     async fetch(): Promise<OpstinaOhridItem[]> {
@@ -106,24 +100,25 @@ export class OpstinaOhridStrategy
             const body = this.cleanText(post.content.rendered);
             if (!body && !title) continue;
 
-            if (this.classifyPost(title, body) !== this.category) continue;
+            const category = this.classifyPost(title, body);
+            if (!category) continue;
 
             const location =
-                this.category === 'road'
+                category === 'road'
                     ? this.extractRoadLocation(title, body)
                     : this.extractLocation(title);
 
             results.push({
                 externalId: hashExternalId(post.id),
                 source: this.source,
-                category: this.category,
-                title: this.formatTitle(title, body, location),
+                category,
+                title: this.formatTitle(category, title, body, location),
                 description: formatSummarySentences(
                     splitSentences(body || title),
                 ),
                 municipalityCode: OHRID_MUNICIPALITY_CODE,
                 locationLabel: this.formatLocationLabel(location),
-                ...(this.category === 'road'
+                ...(category === 'road'
                     ? this.parseRoadWindow(title, body, publishDate, now)
                     : this.parseWaterWindow(title, body, publishDate, now)),
                 observedAt: now,
@@ -140,10 +135,7 @@ export class OpstinaOhridStrategy
         return results;
     }
 
-    private classifyPost(
-        title: string,
-        body: string,
-    ): OpstinaOhridCategory | null {
+    private classifyPost(title: string, body: string): 'water' | 'road' | null {
         if (ROAD_NOISE_RE.test(`${title} ${body}`)) return null;
         if (BAN_TITLE_RE.test(title) && BAN_BODY_RE.test(body)) return 'water';
         if (
@@ -375,8 +367,13 @@ export class OpstinaOhridStrategy
             : `${location}, ${MUNICIPALITY_NAME}`;
     }
 
-    private formatTitle(title: string, body: string, location: string): string {
-        if (this.category === 'water') {
+    private formatTitle(
+        category: 'water' | 'road',
+        title: string,
+        body: string,
+        location: string,
+    ): string {
+        if (category === 'water') {
             return `Забрана за вода за пиење: ${location}`;
         }
 

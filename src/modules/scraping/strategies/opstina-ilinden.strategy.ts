@@ -1,7 +1,4 @@
-import type {
-    OpstinaIlindenCategory,
-    OpstinaIlindenReportInsert,
-} from '../../../core/types/opstina-ilinden.js';
+import type { OpstinaIlindenReportInsert } from '../../../core/types/opstina-ilinden.js';
 import {
     type OpstinaIlindenItem,
     opstinaIlindenResponseSchema,
@@ -67,21 +64,14 @@ export class OpstinaIlindenStrategy
     implements
         ScrapingStrategy<OpstinaIlindenItem[], OpstinaIlindenReportInsert>
 {
-    readonly source: string;
+    readonly source = 'opstina-ilinden';
     readonly url: string;
-    readonly category: OpstinaIlindenCategory;
     readonly target = 'reports';
     readonly schedule: string;
 
-    constructor(
-        url: string,
-        schedule: string,
-        category: OpstinaIlindenCategory,
-    ) {
-        this.source = `opstina-ilinden-${category}`;
+    constructor(url: string, schedule: string) {
         this.url = url;
         this.schedule = schedule;
-        this.category = category;
     }
 
     async fetch(): Promise<OpstinaIlindenItem[]> {
@@ -104,7 +94,8 @@ export class OpstinaIlindenStrategy
             const body = this.cleanText(post.content.rendered);
             if (!body && !title) continue;
 
-            if (this.classifyPost(title) !== this.category) continue;
+            const category = this.classifyPost(title);
+            if (!category) continue;
 
             const location = this.extractLocation(title, body) ?? 'Илинден';
             const locationLabel = this.formatLocationLabel(location);
@@ -112,12 +103,18 @@ export class OpstinaIlindenStrategy
             results.push({
                 externalId: hashExternalId(post.id),
                 source: this.source,
-                category: this.category,
-                title: this.formatTitle(location),
+                category,
+                title: this.formatTitle(category, location),
                 description: this.formatDescription(title, body),
                 municipalityCode: ILINDEN_MUNICIPALITY_CODE,
                 locationLabel,
-                ...this.parseEventWindow(title, body, publishDate, now),
+                ...this.parseEventWindow(
+                    category,
+                    title,
+                    body,
+                    publishDate,
+                    now,
+                ),
                 observedAt: now,
                 rawPayload: {
                     postId: post.id,
@@ -132,7 +129,7 @@ export class OpstinaIlindenStrategy
         return results;
     }
 
-    private classifyPost(title: string): OpstinaIlindenCategory | null {
+    private classifyPost(title: string): 'water' | 'road' | null {
         if (NOISE_RE.test(title)) return null;
         if (WATER_TITLE_RE.test(title)) return 'water';
         if (ROAD_TITLE_RE.test(title)) return 'road';
@@ -140,6 +137,7 @@ export class OpstinaIlindenStrategy
     }
 
     private parseEventWindow(
+        category: 'water' | 'road',
         title: string,
         body: string,
         publishDate: Date,
@@ -163,9 +161,7 @@ export class OpstinaIlindenStrategy
         }
 
         const ttlMs =
-            this.category === 'road'
-                ? UNDATED_ROAD_TTL_MS
-                : UNDATED_WATER_TTL_MS;
+            category === 'road' ? UNDATED_ROAD_TTL_MS : UNDATED_WATER_TTL_MS;
         const ageMs = now.getTime() - publishDate.getTime();
 
         return {
@@ -287,8 +283,8 @@ export class OpstinaIlindenStrategy
             : `${location}, Илинден`;
     }
 
-    private formatTitle(location: string): string {
-        return this.category === 'water'
+    private formatTitle(category: 'water' | 'road', location: string): string {
+        return category === 'water'
             ? `Прекин во водоснабдувањето: ${location}`
             : `Реконструкција на улица: ${location}`;
     }

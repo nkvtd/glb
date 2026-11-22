@@ -97,12 +97,6 @@ async function main() {
         new OpstinaVelesStrategy(
             'https://www.veles.gov.mk/wp-json/wp/v2/posts?categories=42&per_page=50&_fields=id,date,date_gmt,link,title,content',
             '*/30 * * * *',
-            'water',
-        ),
-        new OpstinaVelesStrategy(
-            'https://www.veles.gov.mk/wp-json/wp/v2/posts?categories=42&per_page=50&_fields=id,date,date_gmt,link,title,content',
-            '*/31 * * * *',
-            'road',
         ),
         new OpstinaDebrcaStrategy(
             'https://debrca.gov.mk/wp-json/wp/v2/posts?categories=50&per_page=20&_fields=id,date,date_gmt,link,title,content',
@@ -111,22 +105,10 @@ async function main() {
         new OpstinaIlindenStrategy(
             'https://ilinden.gov.mk/wp-json/wp/v2/posts?categories=12&per_page=100&_fields=id,date,date_gmt,link,title,content',
             '*/30 * * * *',
-            'water',
-        ),
-        new OpstinaIlindenStrategy(
-            'https://ilinden.gov.mk/wp-json/wp/v2/posts?categories=12&per_page=100&_fields=id,date,date_gmt,link,title,content',
-            '*/31 * * * *',
-            'road',
         ),
         new OpstinaOhridStrategy(
             'https://ohrid.gov.mk/wp-json/wp/v2/posts?categories=10&per_page=100&_fields=id,date,date_gmt,link,title,content',
             '*/30 * * * *',
-            'water',
-        ),
-        new OpstinaOhridStrategy(
-            'https://ohrid.gov.mk/wp-json/wp/v2/posts?categories=10&per_page=100&_fields=id,date,date_gmt,link,title,content',
-            '*/31 * * * *',
-            'road',
         ),
     ];
 

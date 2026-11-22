@@ -452,24 +452,39 @@ export class ScrapingOrchestrator {
                 partitionRows(remainder, existingMap);
 
             if (episodeRows.length > 0) {
+                const incomingCategories = Array.from(
+                    new Set(episodeRows.map((r) => r.category)),
+                );
                 const activeRows = await tx
                     .select({
                         id: events.id,
                         externalId: events.externalId,
+                        category: events.category,
                         status: events.status,
                     })
                     .from(events)
                     .where(
                         and(
                             eq(events.source, strategy.source),
-                            eq(events.category, strategy.category),
+                            inArray(events.category, incomingCategories),
                             inArray(events.status, ['ongoing', 'omitted']),
                             isNull(events.endsAt),
                         ),
                     );
 
+                const activeByCategory = new Map<string, typeof activeRows>();
+                for (const active of activeRows) {
+                    const bucket = activeByCategory.get(active.category);
+                    if (bucket) {
+                        bucket.push(active);
+                    } else {
+                        activeByCategory.set(active.category, [active]);
+                    }
+                }
+
                 for (const row of episodeRows) {
-                    const match = activeRows.find(
+                    const actives = activeByCategory.get(row.category) ?? [];
+                    const match = actives.find(
                         (active) =>
                             stripEpisodeSuffix(active.externalId) ===
                             row.externalId,
@@ -478,7 +493,7 @@ export class ScrapingOrchestrator {
                         heartbeatRowIds.add(match.id);
                         continue;
                     }
-                    for (const active of activeRows) {
+                    for (const active of actives) {
                         supersededIdsToEnd.add(active.id);
                     }
                     episodeInserts.push(

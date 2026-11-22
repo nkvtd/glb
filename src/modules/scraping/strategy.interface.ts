@@ -1,4 +1,3 @@
-import type { EventCategory, ReportCategory } from '../../core/enums.js';
 import type { EventInsert, ReportInsert } from '../../core/schema.js';
 
 export interface ScrapingStrategy<
@@ -7,7 +6,6 @@ export interface ScrapingStrategy<
 > {
     readonly source: string;
     readonly url: string;
-    readonly category: ReportCategory | EventCategory;
     readonly target: 'reports' | 'events';
     readonly schedule: string;
     readonly stateFeed?: boolean;

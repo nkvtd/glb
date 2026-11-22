@@ -265,6 +265,7 @@ export function createReportDb(options: ReportDbOptions = {}) {
 export type ExistingEventRow = {
     id: number;
     externalId: string;
+    category?: string;
     status: 'ongoing' | 'omitted' | 'scheduled' | 'ended' | 'unknown';
 };
 
@@ -295,7 +296,10 @@ export function createEventDb(options: EventDbOptions = {}) {
                 where: async () =>
                     state.selected++ === 0
                         ? existingRows
-                        : (options.activeRows ?? []),
+                        : (options.activeRows ?? []).map((row) => ({
+                              ...row,
+                              category: row.category ?? 'fuel_price',
+                          })),
             }),
         }),
         update: () => ({

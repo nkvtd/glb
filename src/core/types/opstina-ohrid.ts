@@ -1,7 +1,5 @@
 import type { ReportInsert } from '../schema.js';
 
-export type OpstinaOhridCategory = 'water' | 'road';
-
 export type OpstinaOhridPayload = {
     postId: number;
     date: string;

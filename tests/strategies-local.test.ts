@@ -837,15 +837,9 @@ describe('VodovodPrilepStrategy', () => {
 });
 
 describe('OpstinaVelesStrategy', () => {
-    const waterStrategy = new OpstinaVelesStrategy(
+    const strategy = new OpstinaVelesStrategy(
         'https://veles.test/wp-json/wp/v2/posts',
         '*/30 * * * *',
-        'water',
-    );
-    const roadStrategy = new OpstinaVelesStrategy(
-        'https://veles.test/wp-json/wp/v2/posts',
-        '*/30 * * * *',
-        'road',
     );
 
     describe('fetch()', () => {
@@ -853,7 +847,7 @@ describe('OpstinaVelesStrategy', () => {
             await withFetch(
                 async () => jsonResponse([velesPost]),
                 async () => {
-                    const result = await waterStrategy.fetch();
+                    const result = await strategy.fetch();
                     assert.ok(Array.isArray(result));
                 },
             );
@@ -864,7 +858,7 @@ describe('OpstinaVelesStrategy', () => {
                 async () => textResponse('provider error', 500),
                 async () => {
                     await assert.rejects(
-                        waterStrategy.fetch(),
+                        strategy.fetch(),
                         /Fetch failed with status code 500: provider error/,
                     );
                 },
@@ -903,15 +897,13 @@ describe('OpstinaVelesStrategy', () => {
                         },
                     },
                 ];
-                for (const strategy of [waterStrategy, roadStrategy]) {
-                    assert.deepEqual(await strategy.parse(evnPosts), []);
-                }
+                assert.deepEqual(await strategy.parse(evnPosts), []);
             });
         });
 
         it('classifies open-ended water bans and dated network works, skipping PDF-bodied lab reports', async () => {
             await withFrozenClock(frozenNow, async () => {
-                const parsed = await waterStrategy.parse([
+                const parsed = await strategy.parse([
                     {
                         id: 5021,
                         date: '2026-11-18T10:00:00',
@@ -989,7 +981,7 @@ describe('OpstinaVelesStrategy', () => {
 
         it('classifies road notices from body text with multi-day and undated windows', async () => {
             await withFrozenClock(frozenNow, async () => {
-                const parsed = await roadStrategy.parse([
+                const parsed = await strategy.parse([
                     {
                         id: 5031,
                         date: '2026-11-17T10:00:00',
@@ -1089,15 +1081,13 @@ describe('OpstinaVelesStrategy', () => {
                     },
                 ];
 
-                for (const strategy of [waterStrategy, roadStrategy]) {
-                    assert.deepEqual(await strategy.parse(noisePosts), []);
-                }
+                assert.deepEqual(await strategy.parse(noisePosts), []);
             });
         });
 
         it('keeps pothole posts, horizontal marking, and interrupted-traffic notices with date-only multi-day windows', async () => {
             await withFrozenClock(frozenNow, async () => {
-                const parsed = await roadStrategy.parse([
+                const parsed = await strategy.parse([
                     {
                         id: 5051,
                         date: '2026-11-18T09:30:00',
@@ -1174,7 +1164,7 @@ describe('OpstinaVelesStrategy', () => {
 
         it('extracts Св. streets, village lists and transformer stations, and skips title-only lab reports', async () => {
             await withFrozenClock(frozenNow, async () => {
-                const waterParsed = await waterStrategy.parse([
+                const waterParsed = await strategy.parse([
                     {
                         id: 5061,
                         date: '2026-11-18T09:00:00',
@@ -1242,7 +1232,7 @@ describe('OpstinaVelesStrategy', () => {
 
         it('skips PDF-bodied water lab/testing reports', async () => {
             await withFrozenClock(frozenNow, async () => {
-                const parsed = await waterStrategy.parse([
+                const parsed = await strategy.parse([
                     {
                         id: 5081,
                         date: '2026-11-17T09:00:00',
@@ -1277,7 +1267,7 @@ describe('OpstinaVelesStrategy', () => {
 
         it('keeps do-not-drink bans that cite a lab report in the body', async () => {
             await withFrozenClock(frozenNow, async () => {
-                const parsed = await waterStrategy.parse([
+                const parsed = await strategy.parse([
                     {
                         id: 5091,
                         date: '2026-11-18T09:00:00',
@@ -1305,7 +1295,7 @@ describe('OpstinaVelesStrategy', () => {
 
         it('skips cultural "дневни" posts and rejects "Повеќе" boilerplate as a location', async () => {
             await withFrozenClock(frozenNow, async () => {
-                const parsed = await waterStrategy.parse([
+                const parsed = await strategy.parse([
                     {
                         id: 5071,
                         date: '2026-11-18T09:00:00',
@@ -1357,20 +1347,38 @@ describe('OpstinaVelesStrategy', () => {
                         },
                     },
                 ];
-                const parsed = await roadStrategy.parse(posts);
+                const parsed = await strategy.parse(posts);
                 assert.equal(parsed.length, 1);
                 assert.equal(at(parsed, 0).category, 'road');
                 assert.doesNotMatch(
                     present(at(parsed, 0).description),
                     /slika-1\.jpg/,
                 );
-                assert.deepEqual(await waterStrategy.parse(posts), []);
+
+                const mixed = await strategy.parse([
+                    ...posts,
+                    {
+                        id: 5099,
+                        date: '2026-11-18T12:00:00',
+                        date_gmt: '2026-11-18T11:00:00',
+                        link: 'https://www.veles.gov.mk/voda-5099/',
+                        title: { rendered: 'ИЗВЕСТУВАЊЕ' },
+                        content: {
+                            rendered:
+                                '<p>Поради реконструкција на водоводната мрежа на ул. Јане Сандански, водоснабдувањето ќе биде отежнато.</p>',
+                        },
+                    },
+                ]);
+                assert.deepEqual(
+                    mixed.map((row) => row.category),
+                    ['road', 'water'],
+                );
             });
         });
 
         it('parses multi-day windows joined by "па се до" and extracts "улица во село" locations', async () => {
             await withFrozenClock(frozenNow, async () => {
-                const parsed = await roadStrategy.parse([
+                const parsed = await strategy.parse([
                     {
                         id: 5082,
                         date: '2026-11-18T09:00:00',
@@ -1420,7 +1428,7 @@ describe('OpstinaVelesStrategy', () => {
 
         it('formats subject-plus-location titles and strips PR boilerplate from descriptions', async () => {
             await withFrozenClock(frozenNow, async () => {
-                const waterParsed = await waterStrategy.parse([
+                const waterParsed = await strategy.parse([
                     {
                         id: 5101,
                         date: '2026-11-18T09:00:00',
@@ -1442,7 +1450,7 @@ describe('OpstinaVelesStrategy', () => {
                     'Реконструкција на водоводна мрежа: Караслари',
                 );
 
-                const roadParsed = await roadStrategy.parse([
+                const roadParsed = await strategy.parse([
                     {
                         id: 5102,
                         date: '2026-11-18T10:00:00',
@@ -1535,7 +1543,7 @@ describe('OpstinaVelesStrategy', () => {
                     '<p>Започнаа градежни активности на улица Гоце Делчев и сообраќајот ќе биде отежнат во зоната на работите.</p>';
 
                 const banAtEdge = at(
-                    await waterStrategy.parse([
+                    await strategy.parse([
                         makePost(5111, '2026-11-04T12:00:00', banBody),
                     ]),
                     0,
@@ -1544,7 +1552,7 @@ describe('OpstinaVelesStrategy', () => {
                 assert.equal(banAtEdge.endsAt, null);
 
                 const banPastEdge = at(
-                    await waterStrategy.parse([
+                    await strategy.parse([
                         makePost(5112, '2026-11-04T11:59:59.999', banBody),
                     ]),
                     0,
@@ -1553,7 +1561,7 @@ describe('OpstinaVelesStrategy', () => {
                 assert.equal(banPastEdge.endsAt, null);
 
                 const waterAtEdge = at(
-                    await waterStrategy.parse([
+                    await strategy.parse([
                         makePost(5113, '2026-11-15T12:00:00', undatedWaterBody),
                     ]),
                     0,
@@ -1562,7 +1570,7 @@ describe('OpstinaVelesStrategy', () => {
                 assert.equal(waterAtEdge.endsAt, null);
 
                 const waterPastEdge = at(
-                    await waterStrategy.parse([
+                    await strategy.parse([
                         makePost(
                             5114,
                             '2026-11-15T11:59:59.999',
@@ -1575,7 +1583,7 @@ describe('OpstinaVelesStrategy', () => {
                 assert.equal(waterPastEdge.endsAt, null);
 
                 const roadAtEdge = at(
-                    await roadStrategy.parse([
+                    await strategy.parse([
                         makePost(5115, '2026-11-11T12:00:00', undatedRoadBody),
                     ]),
                     0,
@@ -1584,7 +1592,7 @@ describe('OpstinaVelesStrategy', () => {
                 assert.equal(roadAtEdge.endsAt, null);
 
                 const roadPastEdge = at(
-                    await roadStrategy.parse([
+                    await strategy.parse([
                         makePost(
                             5116,
                             '2026-11-11T11:59:59.999',
@@ -2469,15 +2477,9 @@ describe('MeteoalarmStrategy', () => {
 });
 
 describe('OpstinaIlindenStrategy', () => {
-    const waterStrategy = new OpstinaIlindenStrategy(
+    const strategy = new OpstinaIlindenStrategy(
         'https://ilinden.test/wp-json/wp/v2/posts',
         '*/30 * * * *',
-        'water',
-    );
-    const roadStrategy = new OpstinaIlindenStrategy(
-        'https://ilinden.test/wp-json/wp/v2/posts',
-        '*/31 * * * *',
-        'road',
     );
 
     const water3553 = {
@@ -2523,7 +2525,7 @@ describe('OpstinaIlindenStrategy', () => {
             await withFetch(
                 async () => jsonResponse([ilindenPost]),
                 async () => {
-                    const result = await waterStrategy.fetch();
+                    const result = await strategy.fetch();
                     assert.ok(Array.isArray(result));
                 },
             );
@@ -2534,7 +2536,7 @@ describe('OpstinaIlindenStrategy', () => {
                 async () => textResponse('provider error', 500),
                 async () => {
                     await assert.rejects(
-                        waterStrategy.fetch(),
+                        strategy.fetch(),
                         /Fetch failed with status code 500/,
                     );
                 },
@@ -2545,11 +2547,11 @@ describe('OpstinaIlindenStrategy', () => {
     describe('parse()', () => {
         it('maps post 3785 onto a full-day ended water report', async () => {
             await withFrozenClock(frozenNow, async () => {
-                const parsed = await waterStrategy.parse([ilindenPost]);
+                const parsed = await strategy.parse([ilindenPost]);
                 assert.equal(parsed.length, 1);
 
                 const report = at(parsed, 0);
-                assert.equal(report.source, 'opstina-ilinden-water');
+                assert.equal(report.source, 'opstina-ilinden');
                 assert.equal(report.category, 'water');
                 assert.equal(report.status, 'ended');
                 assert.equal(report.municipalityCode, 'MK0080700');
@@ -2578,7 +2580,7 @@ describe('OpstinaIlindenStrategy', () => {
 
         it('parses a timed single-day window and a settlement list', async () => {
             await withFrozenClock(frozenNow, async () => {
-                const parsed = await waterStrategy.parse([water3553]);
+                const parsed = await strategy.parse([water3553]);
                 assert.equal(parsed.length, 1);
 
                 const report = at(parsed, 0);
@@ -2604,11 +2606,11 @@ describe('OpstinaIlindenStrategy', () => {
 
         it('spans the weekday tail after "наредните денови" for road works', async () => {
             await withFrozenClock(frozenNow, async () => {
-                const parsed = await roadStrategy.parse([road4244]);
+                const parsed = await strategy.parse([road4244]);
                 assert.equal(parsed.length, 1);
 
                 const report = at(parsed, 0);
-                assert.equal(report.source, 'opstina-ilinden-road');
+                assert.equal(report.source, 'opstina-ilinden');
                 assert.equal(report.category, 'road');
                 assert.equal(report.status, 'ended');
                 assert.equal(report.locationLabel, 'Илинден');
@@ -2626,7 +2628,7 @@ describe('OpstinaIlindenStrategy', () => {
 
         it('marks future-dated water notices as scheduled', async () => {
             await withFrozenClock(frozenNow, async () => {
-                const parsed = await waterStrategy.parse([
+                const parsed = await strategy.parse([
                     makePost(
                         9001,
                         'ИЗВЕСТУВАЊЕ ЗА ПРЕКИН ВО ВОДОСНАБДУВАЊЕ',
@@ -2710,16 +2712,22 @@ describe('OpstinaIlindenStrategy', () => {
                     ),
                 ];
 
-                for (const strategy of [waterStrategy, roadStrategy]) {
-                    assert.deepEqual(await strategy.parse(noisePosts), []);
-                }
+                assert.deepEqual(await strategy.parse(noisePosts), []);
             });
         });
 
-        it('keeps the category gate between the water and road instances', async () => {
+        it('emits both a water and a road report from one payload', async () => {
             await withFrozenClock(frozenNow, async () => {
-                assert.deepEqual(await roadStrategy.parse([ilindenPost]), []);
-                assert.deepEqual(await waterStrategy.parse([road4244]), []);
+                const parsed = await strategy.parse([ilindenPost, road4244]);
+                assert.equal(parsed.length, 2);
+
+                const water = at(parsed, 0);
+                assert.equal(water.source, 'opstina-ilinden');
+                assert.equal(water.category, 'water');
+
+                const road = at(parsed, 1);
+                assert.equal(road.source, 'opstina-ilinden');
+                assert.equal(road.category, 'road');
             });
         });
 
@@ -2735,7 +2743,7 @@ describe('OpstinaIlindenStrategy', () => {
                     '<p>Сообраќајот е отежнат поради градежни работи.</p>';
 
                 const waterAtEdge = at(
-                    await waterStrategy.parse([
+                    await strategy.parse([
                         {
                             ...makePost(
                                 9101,
@@ -2752,7 +2760,7 @@ describe('OpstinaIlindenStrategy', () => {
                 assert.equal(waterAtEdge.endsAt, null);
 
                 const waterPastEdge = at(
-                    await waterStrategy.parse([
+                    await strategy.parse([
                         {
                             ...makePost(
                                 9102,
@@ -2769,7 +2777,7 @@ describe('OpstinaIlindenStrategy', () => {
                 assert.equal(waterPastEdge.endsAt, null);
 
                 const roadAtEdge = at(
-                    await roadStrategy.parse([
+                    await strategy.parse([
                         {
                             ...makePost(
                                 9103,
@@ -2786,7 +2794,7 @@ describe('OpstinaIlindenStrategy', () => {
                 assert.equal(roadAtEdge.endsAt, null);
 
                 const roadPastEdge = at(
-                    await roadStrategy.parse([
+                    await strategy.parse([
                         {
                             ...makePost(
                                 9104,
@@ -2806,7 +2814,7 @@ describe('OpstinaIlindenStrategy', () => {
 
         it('strips HTML artifacts and caps descriptions at two sentences', async () => {
             await withFrozenClock(frozenNow, async () => {
-                const parsed = await roadStrategy.parse([
+                const parsed = await strategy.parse([
                     {
                         ...road4244,
                         content: {
@@ -2830,15 +2838,9 @@ describe('OpstinaIlindenStrategy', () => {
 });
 
 describe('OpstinaOhridStrategy', () => {
-    const waterStrategy = new OpstinaOhridStrategy(
+    const strategy = new OpstinaOhridStrategy(
         'https://ohrid.test/wp-json/wp/v2/posts?categories=10',
         '*/30 * * * *',
-        'water',
-    );
-    const roadStrategy = new OpstinaOhridStrategy(
-        'https://ohrid.test/wp-json/wp/v2/posts?categories=10',
-        '*/31 * * * *',
-        'road',
     );
 
     const makePost = (
@@ -2878,7 +2880,7 @@ describe('OpstinaOhridStrategy', () => {
             await withFetch(
                 async () => jsonResponse([ohridPost]),
                 async () => {
-                    const result = await waterStrategy.fetch();
+                    const result = await strategy.fetch();
                     assert.ok(Array.isArray(result));
                 },
             );
@@ -2889,7 +2891,7 @@ describe('OpstinaOhridStrategy', () => {
                 async () => textResponse('provider error', 500),
                 async () => {
                     await assert.rejects(
-                        waterStrategy.fetch(),
+                        strategy.fetch(),
                         /Fetch failed with status code 500: provider error/,
                     );
                 },
@@ -2900,14 +2902,11 @@ describe('OpstinaOhridStrategy', () => {
     describe('parse()', () => {
         it('maps the historical and fresh bans onto municipality-pinned open-ended reports', async () => {
             await withFrozenClock(frozenNow, async () => {
-                const parsed = await waterStrategy.parse([
-                    openicaPost,
-                    ohridPost,
-                ]);
+                const parsed = await strategy.parse([openicaPost, ohridPost]);
                 assert.equal(parsed.length, 2);
 
                 const fresh = at(parsed, 0);
-                assert.equal(fresh.source, 'opstina-ohrid-water');
+                assert.equal(fresh.source, 'opstina-ohrid');
                 assert.equal(fresh.category, 'water');
                 assert.equal(fresh.municipalityCode, 'MK0031000');
                 assert.equal(fresh.status, 'ongoing');
@@ -2963,7 +2962,7 @@ describe('OpstinaOhridStrategy', () => {
                 });
 
                 const atEdge = at(
-                    await waterStrategy.parse([
+                    await strategy.parse([
                         makePost(46701, '2026-11-04T12:00:00'),
                     ]),
                     0,
@@ -2972,7 +2971,7 @@ describe('OpstinaOhridStrategy', () => {
                 assert.equal(atEdge.endsAt, null);
 
                 const pastEdge = at(
-                    await waterStrategy.parse([
+                    await strategy.parse([
                         makePost(46702, '2026-11-04T11:59:59.999'),
                     ]),
                     0,
@@ -2984,7 +2983,7 @@ describe('OpstinaOhridStrategy', () => {
 
         it('falls back to the municipality label when the title has no location tail', async () => {
             await withFrozenClock(frozenNow, async () => {
-                const parsed = await waterStrategy.parse([
+                const parsed = await strategy.parse([
                     {
                         id: 46901,
                         date: '2026-11-16T10:00:00',
@@ -3007,7 +3006,7 @@ describe('OpstinaOhridStrategy', () => {
             });
         });
 
-        it('skips traffic, contest and council noise', async () => {
+        it('skips contest, council and informational noise', async () => {
             await withFrozenClock(frozenNow, async () => {
                 const makePost = (id: number, title: string) => ({
                     id,
@@ -3023,14 +3022,6 @@ describe('OpstinaOhridStrategy', () => {
 
                 const noise = [
                     makePost(
-                        43462,
-                        'ВРЕМЕНА ЗАБРАНА ЗА СООБРАЌАЈ ВО СТАРИОТ ДЕЛ ОД ГРАДОТ',
-                    ),
-                    makePost(
-                        45514,
-                        'ЗАТВОРЕНА ЗА СООБРАЌАЈ ДЕЛ ОД УЛИЦАТА „7-МИ НОЕМВРИ“',
-                    ),
-                    makePost(
                         46696,
                         'КОНКУРС ЗА ДОДЕЛУВАЊЕ ОПШТИНСКА НАГРАДА – ПАТРОН НА ГРАДОТ „СВ. КЛИМЕНТ ОХРИДСКИ“',
                     ),
@@ -3044,13 +3035,13 @@ describe('OpstinaOhridStrategy', () => {
                     ),
                 ];
 
-                assert.deepEqual(await waterStrategy.parse(noise), []);
+                assert.deepEqual(await strategy.parse(noise), []);
             });
         });
 
         it('strips Elementor chrome and caps descriptions at two sentences', async () => {
             await withFrozenClock(frozenNow, async () => {
-                const parsed = await waterStrategy.parse([ohridPost]);
+                const parsed = await strategy.parse([ohridPost]);
                 assert.equal(parsed.length, 1);
 
                 const report = at(parsed, 0);
@@ -3066,19 +3057,25 @@ describe('OpstinaOhridStrategy', () => {
             });
         });
 
-        it('keeps the category gate between the water and road instances', async () => {
+        it('emits both a water and a road report from one payload', async () => {
             await withFrozenClock(frozenNow, async () => {
-                assert.deepEqual(await roadStrategy.parse([openicaPost]), []);
-                assert.deepEqual(
-                    await waterStrategy.parse([
-                        makePost(
-                            45514,
-                            'ЗАТВОРЕНА ЗА СООБРАЌАЈ ДЕЛ ОД УЛИЦАТА „7-МИ НОЕМВРИ“',
-                            '<p>Од утре 18.09.2026 година ќе биде затворен дел од улицата.</p>',
-                        ),
-                    ]),
-                    [],
-                );
+                const parsed = await strategy.parse([
+                    openicaPost,
+                    makePost(
+                        45514,
+                        'ЗАТВОРЕНА ЗА СООБРАЌАЈ ДЕЛ ОД УЛИЦАТА „7-МИ НОЕМВРИ“',
+                        '<p>Од утре 18.09.2026 година ќе биде затворен дел од улицата.</p>',
+                    ),
+                ]);
+                assert.equal(parsed.length, 2);
+
+                const water = at(parsed, 0);
+                assert.equal(water.source, 'opstina-ohrid');
+                assert.equal(water.category, 'water');
+
+                const road = at(parsed, 1);
+                assert.equal(road.source, 'opstina-ohrid');
+                assert.equal(road.category, 'road');
             });
         });
     });
@@ -3093,11 +3090,11 @@ describe('OpstinaOhridStrategy', () => {
 
         it('maps an open-ended closure onto a dated start with no end', async () => {
             await withFrozenClock(frozenNow, async () => {
-                const parsed = await roadStrategy.parse([closurePost]);
+                const parsed = await strategy.parse([closurePost]);
                 assert.equal(parsed.length, 1);
 
                 const report = at(parsed, 0);
-                assert.equal(report.source, 'opstina-ohrid-road');
+                assert.equal(report.source, 'opstina-ohrid');
                 assert.equal(report.category, 'road');
                 assert.equal(report.status, 'ended');
                 assert.equal(report.municipalityCode, 'MK0031000');
@@ -3119,7 +3116,7 @@ describe('OpstinaOhridStrategy', () => {
 
         it('marks a future-dated open-ended closure as scheduled', async () => {
             await withFrozenClock(frozenNow, async () => {
-                const parsed = await roadStrategy.parse([
+                const parsed = await strategy.parse([
                     makePost(
                         46711,
                         'ЗАТВОРЕНА ЗА СООБРАЌАЈ ДЕЛ ОД УЛИЦАТА „7-ми Ноември“',
@@ -3141,7 +3138,7 @@ describe('OpstinaOhridStrategy', () => {
 
         it('ends a recent open-ended closure once the body reports it finished', async () => {
             await withFrozenClock(frozenNow, async () => {
-                const parsed = await roadStrategy.parse([
+                const parsed = await strategy.parse([
                     makePost(
                         46712,
                         'ЗАТВОРЕНА ЗА СООБРАЌАЈ ДЕЛ ОД УЛИЦАТА „Кленоец“',
@@ -3159,7 +3156,7 @@ describe('OpstinaOhridStrategy', () => {
 
         it('decodes HTML-entity quotes before extracting the street', async () => {
             await withFrozenClock(frozenNow, async () => {
-                const parsed = await roadStrategy.parse([
+                const parsed = await strategy.parse([
                     makePost(
                         46713,
                         'ЗАТВОРЕНА ЗА СООБРАЌАЈ ДЕЛ ОД УЛИЦАТА &#8222;7-ми Ноември&#8220;',
@@ -3183,7 +3180,7 @@ describe('OpstinaOhridStrategy', () => {
 
         it('parses a multi-day closure window in local time', async () => {
             await withFrozenClock(frozenNow, async () => {
-                const parsed = await roadStrategy.parse([
+                const parsed = await strategy.parse([
                     makePost(
                         43872,
                         'ИЗВЕСТУВАЊЕ ЗА ВРЕМЕНО ЗАТВОРАЊЕ НА ДЕЛ ОД УЛИЦА „СВЕТИ КЛИМЕНТОВ УНИВЕРЗИТЕТ“',
@@ -3212,7 +3209,7 @@ describe('OpstinaOhridStrategy', () => {
 
         it('parses a single-day closure with an hour range', async () => {
             await withFrozenClock(frozenNow, async () => {
-                const parsed = await roadStrategy.parse([
+                const parsed = await strategy.parse([
                     makePost(
                         45422,
                         'ИЗВЕСТУВАЊЕ ЗА ВРЕМЕН РЕЖИМ НА СООБРАЌАЈ',
@@ -3242,7 +3239,7 @@ describe('OpstinaOhridStrategy', () => {
 
         it('parses a start time as the beginning of the rest of the day', async () => {
             await withFrozenClock(frozenNow, async () => {
-                const parsed = await roadStrategy.parse([
+                const parsed = await strategy.parse([
                     makePost(
                         45117,
                         'ИЗВЕСТУВАЊЕ ЗА АСФАЛТИРАЊЕ НА ДЕЛ ОД УЛИЦА „КЛЕНОЕЦ“',
@@ -3271,7 +3268,7 @@ describe('OpstinaOhridStrategy', () => {
 
         it('classifies a generic title through the body and falls back to the publish date', async () => {
             await withFrozenClock(frozenNow, async () => {
-                const parsed = await roadStrategy.parse([
+                const parsed = await strategy.parse([
                     makePost(
                         44228,
                         'ИЗВЕСТУВАЊЕ – ВЕЛГОШТИ',
@@ -3295,7 +3292,7 @@ describe('OpstinaOhridStrategy', () => {
 
         it('maps an open-ended dated closure past the 7d TTL onto ended', async () => {
             await withFrozenClock(frozenNow, async () => {
-                const parsed = await roadStrategy.parse([
+                const parsed = await strategy.parse([
                     makePost(
                         43795,
                         'ЗАТВОРЕНА ЗА СООБРАЌАЈ ДЕЛ ОД УЛИЦАТА „КЛЕНОЕЦ“',
@@ -3322,7 +3319,7 @@ describe('OpstinaOhridStrategy', () => {
 
         it('treats a month-only restriction as undated and age-gates it', async () => {
             await withFrozenClock(frozenNow, async () => {
-                const parsed = await roadStrategy.parse([
+                const parsed = await strategy.parse([
                     makePost(
                         43462,
                         'ВРЕМЕНА ЗАБРАНА ЗА СООБРАЌАЈ ВО СТАРИОТ ДЕЛ ОД ГРАДОТ',
@@ -3352,7 +3349,7 @@ describe('OpstinaOhridStrategy', () => {
                     '<p>Ќе се вршат градежни активности на патниот правец до Велгошти.</p>';
 
                 const atEdge = at(
-                    await roadStrategy.parse([
+                    await strategy.parse([
                         makePost(
                             9201,
                             'ИЗВЕСТУВАЊЕ – ВЕЛГОШТИ',
@@ -3366,7 +3363,7 @@ describe('OpstinaOhridStrategy', () => {
                 assert.equal(atEdge.endsAt, null);
 
                 const pastEdge = at(
-                    await roadStrategy.parse([
+                    await strategy.parse([
                         makePost(
                             9202,
                             'ИЗВЕСТУВАЊЕ – ВЕЛГОШТИ',
@@ -3406,7 +3403,7 @@ describe('OpstinaOhridStrategy', () => {
                     ),
                 ];
 
-                assert.deepEqual(await roadStrategy.parse(noise), []);
+                assert.deepEqual(await strategy.parse(noise), []);
             });
         });
     });

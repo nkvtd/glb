@@ -86,17 +86,14 @@ type EventWindow = {
 export class OpstinaVelesStrategy
     implements ScrapingStrategy<OpstinaVelesItem[], OpstinaVelesReportInsert>
 {
-    readonly source: string;
+    readonly source = 'opstina-veles';
     readonly url: string;
-    readonly category: 'water' | 'road';
     readonly target = 'reports';
     readonly schedule: string;
 
-    constructor(url: string, schedule: string, category: 'water' | 'road') {
-        this.source = `opstina-veles-${category}`;
+    constructor(url: string, schedule: string) {
         this.url = url;
         this.schedule = schedule;
-        this.category = category;
     }
 
     async fetch(): Promise<OpstinaVelesItem[]> {
@@ -119,7 +116,8 @@ export class OpstinaVelesStrategy
             const body = this.cleanText(post.content.rendered);
             if (!body && !title) continue;
 
-            if (this.classifyPost(title, body) !== this.category) continue;
+            const category = this.classifyPost(title, body);
+            if (!category) continue;
 
             const location = this.extractLocation(title, body);
             const locationLabel = this.formatLocationLabel(location);
@@ -127,12 +125,23 @@ export class OpstinaVelesStrategy
             results.push({
                 externalId: hashExternalId(post.id),
                 source: this.source,
-                category: this.category,
-                title: this.formatTitle(title, body, location ?? 'Велес'),
+                category,
+                title: this.formatTitle(
+                    category,
+                    title,
+                    body,
+                    location ?? 'Велес',
+                ),
                 description: this.formatDescription(title, body),
                 municipalityCode: VELES_MUNICIPALITY_CODE,
                 locationLabel,
-                ...this.parseEventWindow(title, body, publishDate, now),
+                ...this.parseEventWindow(
+                    category,
+                    title,
+                    body,
+                    publishDate,
+                    now,
+                ),
                 observedAt: now,
                 rawPayload: {
                     postId: post.id,
@@ -159,6 +168,7 @@ export class OpstinaVelesStrategy
     }
 
     private parseEventWindow(
+        category: 'water' | 'road',
         title: string,
         body: string,
         publishDate: Date,
@@ -195,9 +205,7 @@ export class OpstinaVelesStrategy
         }
 
         const ttlMs =
-            this.category === 'road'
-                ? UNDATED_ROAD_TTL_MS
-                : UNDATED_WATER_TTL_MS;
+            category === 'road' ? UNDATED_ROAD_TTL_MS : UNDATED_WATER_TTL_MS;
         return {
             startsAt: publishDate,
             endsAt: null,
@@ -330,10 +338,15 @@ export class OpstinaVelesStrategy
             : `${trimmed}, Велес`;
     }
 
-    private formatTitle(title: string, body: string, location: string): string {
+    private formatTitle(
+        category: 'water' | 'road',
+        title: string,
+        body: string,
+        location: string,
+    ): string {
         const combined = `${title} ${body}`;
 
-        if (this.category === 'water') {
+        if (category === 'water') {
             if (OPEN_ENDED_BAN_RE.test(combined)) {
                 return `Забрана за вода за пиење: ${location}`;
             }
