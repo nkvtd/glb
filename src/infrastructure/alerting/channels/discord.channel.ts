@@ -41,7 +41,6 @@ export class DiscordChannel implements AlertChannel {
     }
 
     private buildEmbed(item: AlertItem) {
-        const statusMeta = this.getStatusMeta(item.status);
         const categoryEmoji = this.getCategoryEmoji(item.category);
         const location =
             'locationLabel' in item && item.locationLabel
@@ -54,19 +53,17 @@ export class DiscordChannel implements AlertChannel {
                 value: item.source,
                 inline: true,
             },
-            {
-                name: 'Статус',
-                value: statusMeta.label,
-                inline: true,
-            },
         ];
 
         if (location) {
-            fields.push({
-                name: 'Локација',
-                value: location,
-                inline: true,
-            });
+            fields.push(
+                {
+                    name: 'Локација',
+                    value: location,
+                    inline: true,
+                },
+                { name: '\u200b', value: '\u200b', inline: true },
+            );
         }
 
         if (item.startsAt) {
@@ -90,7 +87,7 @@ export class DiscordChannel implements AlertChannel {
             description: item.description
                 ? this.truncate(item.description, 4096)
                 : undefined,
-            color: statusMeta.color,
+            color: 0xe74c3c,
             fields,
             footer: {
                 text: `glb::relay`,
@@ -107,22 +104,6 @@ export class DiscordChannel implements AlertChannel {
     private truncate(text: string, maxLength: number): string {
         if (text.length <= maxLength) return text;
         return `${text.slice(0, maxLength - 3)}...`;
-    }
-
-    private getStatusMeta(status: AlertItem['status']): {
-        color: number;
-        label: string;
-    } {
-        switch (status) {
-            case 'ongoing':
-                return { color: 0xe74c3c, label: 'Во тек' };
-            case 'scheduled':
-                return { color: 0xf39c12, label: 'Најавено' };
-            case 'ended':
-                return { color: 0x2ecc71, label: 'Завршено' };
-            default:
-                return { color: 0x95a5a6, label: 'Непознато' };
-        }
     }
 
     private getCategoryEmoji(category: string): string {

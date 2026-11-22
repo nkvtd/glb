@@ -90,7 +90,7 @@ describe('Alerting', () => {
         const fields = firstEmbed.fields;
         assert.deepEqual(
             fields.map((field) => field.name),
-            ['Извор', 'Статус', 'Локација', 'Почеток', 'Крај'],
+            ['Извор', 'Локација', '\u200b', 'Почеток', 'Крај'],
         );
         assert.match(at(fields, 3).value, /<t:\d+:f>/);
 
@@ -105,7 +105,7 @@ describe('Alerting', () => {
         );
     });
 
-    it('omits report-only fields for events and maps unknown status/category to fallbacks', async () => {
+    it('builds a single-field embed for location-less events with unknown categories', async () => {
         let payload: DiscordWebhookPayload | undefined;
         await withFetch(
             (async (_input, init) => {
@@ -130,15 +130,18 @@ describe('Alerting', () => {
         );
         const embed = at(present(payload).embeds, 0);
         assert.match(embed.title, /^📢 /);
-        assert.equal(embed.color, 0x95a5a6);
+        assert.equal(embed.color, 0xe74c3c);
         assert.equal(embed.description, undefined);
         assert.deepEqual(
             embed.fields.map((field) => field.name),
-            ['Извор', 'Статус'],
+            ['Извор'],
+        );
+        assert.ok(
+            embed.fields.every((field) => typeof field.value === 'string'),
         );
     });
 
-    it('maps every supported Discord category and lifecycle status', async () => {
+    it('maps every supported Discord category emoji', async () => {
         let payload: DiscordWebhookPayload | undefined;
         const categories = [
             'fuel_price',
@@ -152,7 +155,6 @@ describe('Alerting', () => {
             'earthquake',
             'internet',
         ];
-        const statuses = ['ongoing', 'scheduled', 'ended', 'unknown'];
         const expectedEmoji = [
             '⛽',
             '💱',
@@ -165,13 +167,7 @@ describe('Alerting', () => {
             '🌍',
             '🛜',
         ];
-        const expectedColor = [0xe74c3c, 0xf39c12, 0x2ecc71, 0x95a5a6];
-        const items = categories.map((category, index) =>
-            alertItem({
-                category,
-                status: statuses[index % statuses.length],
-            }),
-        );
+        const items = categories.map((category) => alertItem({ category }));
 
         await withFetch(
             (async (_input, init) => {
@@ -191,9 +187,7 @@ describe('Alerting', () => {
         }
         assert.deepEqual(
             embeds.map((embed) => embed.color),
-            categories.map(
-                (_, index) => expectedColor[index % expectedColor.length],
-            ),
+            categories.map(() => 0xe74c3c),
         );
     });
 
